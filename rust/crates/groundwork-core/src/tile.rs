@@ -1,9 +1,10 @@
 //! A 128×128 block area of a dimension. Port of `org.pepsoft.worldpainter.Tile`.
 //!
-//! Heights are stored as Java does: `(height - min_height) * 256` in an
-//! integer, giving 1/256 block precision. The Java version switches between
-//! `short` and `int` storage depending on world height; the Rust version
-//! always uses `i32` (Java's "tall" representation).
+//! Heights are stored as Java does: `(height - min_height) * 256`, giving
+//! 1/256 block precision. To save memory, a tile keeps its heights as 16-bit
+//! offsets from its lowest point whenever its height range allows (any range
+//! up to 256 blocks), and per-column data that is the same for the whole tile
+//! (water level, terrain, layer values) as a single value.
 
 use crate::layers::{DataSize, LayerDef};
 use crate::terrain::Terrain;
@@ -15,12 +16,126 @@ pub const TILE_SIZE_BITS: i32 = 7;
 pub const TILE_SIZE_MASK: i32 = TILE_SIZE - 1;
 const AREA: usize = (TILE_SIZE * TILE_SIZE) as usize;
 
+/// Per-column values that are often identical across a whole tile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum Plane<T> {
+    Uniform(T),
+    Full(Box<[T]>),
+}
+
+impl<T: Copy + PartialEq> Plane<T> {
+    fn get(&self, i: usize) -> T {
+        match self {
+            Plane::Uniform(v) => *v,
+            Plane::Full(values) => values[i],
+        }
+    }
+
+    fn set(&mut self, i: usize, value: T) {
+        match self {
+            Plane::Uniform(v) if *v == value => {}
+            Plane::Uniform(v) => {
+                let mut values = vec![*v; AREA].into_boxed_slice();
+                values[i] = value;
+                *self = Plane::Full(values);
+            }
+            Plane::Full(values) => values[i] = value,
+        }
+    }
+
+    fn is_all(&self, value: T) -> bool {
+        match self {
+            Plane::Uniform(v) => *v == value,
+            Plane::Full(values) => values.iter().all(|v| *v == value),
+        }
+    }
+
+    fn compact(&mut self) {
+        if let Plane::Full(values) = self {
+            let first = values[0];
+            if values.iter().all(|v| *v == first) {
+                *self = Plane::Uniform(first);
+            }
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        match self {
+            Plane::Uniform(_) => 0,
+            Plane::Full(values) => values.len() * std::mem::size_of::<T>(),
+        }
+    }
+}
+
+/// Raw heights: 16-bit offsets from `base` while the tile's range fits,
+/// otherwise full 32-bit values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum Heights {
+    Narrow { base: i32, offsets: Box<[u16]> },
+    Wide(Box<[i32]>),
+}
+
+impl Heights {
+    fn get(&self, i: usize) -> i32 {
+        match self {
+            Heights::Narrow { base, offsets } => base + offsets[i] as i32,
+            Heights::Wide(values) => values[i],
+        }
+    }
+
+    fn set(&mut self, i: usize, raw: i32) {
+        match self {
+            Heights::Narrow { base, offsets } => {
+                let offset = raw - *base;
+                if (0..=u16::MAX as i32).contains(&offset) {
+                    offsets[i] = offset as u16;
+                } else {
+                    let mut values: Box<[i32]> =
+                        offsets.iter().map(|&o| *base + o as i32).collect();
+                    values[i] = raw;
+                    *self = Heights::Wide(values);
+                }
+            }
+            Heights::Wide(values) => values[i] = raw,
+        }
+    }
+
+    fn range(&self) -> (i32, i32) {
+        match self {
+            Heights::Narrow { base, offsets } => (
+                base + *offsets.iter().min().unwrap() as i32,
+                base + *offsets.iter().max().unwrap() as i32,
+            ),
+            Heights::Wide(values) => (*values.iter().min().unwrap(), *values.iter().max().unwrap()),
+        }
+    }
+
+    /// Re-narrows a wide tile, or rebases a narrow one at its lowest point so
+    /// later edits have the most room before it must widen.
+    fn compact(&mut self) {
+        let (low, high) = self.range();
+        if high - low <= u16::MAX as i32
+            && !matches!(self, Heights::Narrow { base, .. } if *base == low)
+        {
+            let offsets = (0..AREA).map(|i| (self.get(i) - low) as u16).collect();
+            *self = Heights::Narrow { base: low, offsets };
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        match self {
+            Heights::Narrow { offsets, .. } => offsets.len() * 2,
+            Heights::Wide(values) => values.len() * 4,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum LayerBuffer {
     Bit(Vec<u64>),
-    /// One value per byte for simplicity; values are 0..=15.
-    Nibble(Vec<u8>),
-    Byte(Vec<u8>),
+    /// Values 0..=15.
+    Nibble(Plane<u8>),
+    Byte(Plane<u8>),
 }
 
 impl LayerBuffer {
@@ -29,15 +144,15 @@ impl LayerBuffer {
             DataSize::Bit => {
                 LayerBuffer::Bit(vec![if def.default != 0 { u64::MAX } else { 0 }; AREA / 64])
             }
-            DataSize::Nibble => LayerBuffer::Nibble(vec![def.default; AREA]),
-            DataSize::Byte => LayerBuffer::Byte(vec![def.default; AREA]),
+            DataSize::Nibble => LayerBuffer::Nibble(Plane::Uniform(def.default)),
+            DataSize::Byte => LayerBuffer::Byte(Plane::Uniform(def.default)),
         }
     }
 
     fn get(&self, i: usize) -> u8 {
         match self {
             LayerBuffer::Bit(bits) => ((bits[i >> 6] >> (i & 63)) & 1) as u8,
-            LayerBuffer::Nibble(v) | LayerBuffer::Byte(v) => v[i],
+            LayerBuffer::Nibble(p) | LayerBuffer::Byte(p) => p.get(i),
         }
     }
 
@@ -50,8 +165,8 @@ impl LayerBuffer {
                     bits[i >> 6] &= !(1 << (i & 63));
                 }
             }
-            LayerBuffer::Nibble(v) => v[i] = value.min(15),
-            LayerBuffer::Byte(v) => v[i] = value,
+            LayerBuffer::Nibble(p) => p.set(i, value.min(15)),
+            LayerBuffer::Byte(p) => p.set(i, value),
         }
     }
 
@@ -61,9 +176,28 @@ impl LayerBuffer {
                 let fill = if value != 0 { u64::MAX } else { 0 };
                 bits.iter().all(|&b| b == fill)
             }
-            LayerBuffer::Nibble(v) | LayerBuffer::Byte(v) => v.iter().all(|&b| b == value),
+            LayerBuffer::Nibble(p) | LayerBuffer::Byte(p) => p.is_all(value),
         }
     }
+
+    fn compact(&mut self) {
+        if let LayerBuffer::Nibble(p) | LayerBuffer::Byte(p) = self {
+            p.compact();
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        match self {
+            LayerBuffer::Bit(bits) => bits.len() * 8,
+            LayerBuffer::Nibble(p) | LayerBuffer::Byte(p) => p.bytes(),
+        }
+    }
+}
+
+/// Layer data as saved by format version 1.
+pub(crate) enum LegacyLayer {
+    Bit(Vec<u64>),
+    Values { nibble: bool, values: Vec<u8> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,9 +206,10 @@ pub struct Tile {
     y: i32,
     min_height: i32,
     max_height: i32,
-    terrain: Vec<u8>,
-    height: Vec<i32>,
-    water: Vec<i32>,
+    terrain: Plane<u8>,
+    height: Heights,
+    /// Water level minus `min_height`.
+    water: Plane<u16>,
     layers: BTreeMap<String, LayerBuffer>,
 }
 
@@ -97,11 +232,57 @@ impl Tile {
             y,
             min_height,
             max_height,
-            terrain: vec![Terrain::Grass.ordinal(); AREA],
-            height: vec![0; AREA],
-            water: vec![0; AREA],
+            terrain: Plane::Uniform(Terrain::Grass.ordinal()),
+            height: Heights::Narrow {
+                base: 0,
+                offsets: vec![0; AREA].into_boxed_slice(),
+            },
+            water: Plane::Uniform(0),
             layers: BTreeMap::new(),
         }
+    }
+
+    /// Rebuilds a tile saved in format version 1 (plain arrays).
+    pub(crate) fn from_v1(
+        (x, y, min_height, max_height): (i32, i32, i32, i32),
+        terrain: Vec<u8>,
+        height: Vec<i32>,
+        water: Vec<i32>,
+        layers: Vec<(String, LegacyLayer)>,
+    ) -> Self {
+        let mut tile = Tile {
+            x,
+            y,
+            min_height,
+            max_height,
+            terrain: Plane::Full(terrain.into_boxed_slice()),
+            height: Heights::Wide(height.into_boxed_slice()),
+            water: Plane::Full(
+                water
+                    .into_iter()
+                    .map(|w| w.clamp(0, u16::MAX as i32) as u16)
+                    .collect(),
+            ),
+            layers: layers
+                .into_iter()
+                .map(|(id, layer)| {
+                    let buffer = match layer {
+                        LegacyLayer::Bit(bits) => LayerBuffer::Bit(bits),
+                        LegacyLayer::Values {
+                            nibble: true,
+                            values,
+                        } => LayerBuffer::Nibble(Plane::Full(values.into_boxed_slice())),
+                        LegacyLayer::Values {
+                            nibble: false,
+                            values,
+                        } => LayerBuffer::Byte(Plane::Full(values.into_boxed_slice())),
+                    };
+                    (id, buffer)
+                })
+                .collect(),
+        };
+        tile.compact();
+        tile
     }
 
     pub fn x(&self) -> i32 {
@@ -125,7 +306,7 @@ impl Tile {
     }
 
     pub fn height(&self, x: i32, y: i32) -> f32 {
-        self.height[idx(x, y)] as f32 / 256.0 + self.min_height as f32
+        self.height.get(idx(x, y)) as f32 / 256.0 + self.min_height as f32
     }
 
     /// Height rounded the way Java's `Math.round` does.
@@ -136,44 +317,46 @@ impl Tile {
     /// Sets the height, clamped to the dimension's vertical range.
     pub fn set_height(&mut self, x: i32, y: i32, height: f32) {
         let h = self.clamp_height(height);
-        self.height[idx(x, y)] = ((h - self.min_height as f32) * 256.0) as i32;
+        self.height
+            .set(idx(x, y), ((h - self.min_height as f32) * 256.0) as i32);
     }
 
     /// Raw height: `(height - min_height) * 256`.
     pub fn raw_height(&self, x: i32, y: i32) -> i32 {
-        self.height[idx(x, y)]
+        self.height.get(idx(x, y))
     }
 
     pub fn set_raw_height(&mut self, x: i32, y: i32, raw: i32) {
         let max_raw = (self.max_height - 1 - self.min_height) * 256;
-        self.height[idx(x, y)] = raw.clamp(0, max_raw);
+        self.height.set(idx(x, y), raw.clamp(0, max_raw));
     }
 
     pub fn lowest_height(&self) -> f32 {
-        *self.height.iter().min().unwrap() as f32 / 256.0 + self.min_height as f32
+        self.height.range().0 as f32 / 256.0 + self.min_height as f32
     }
 
     pub fn highest_height(&self) -> f32 {
-        *self.height.iter().max().unwrap() as f32 / 256.0 + self.min_height as f32
+        self.height.range().1 as f32 / 256.0 + self.min_height as f32
     }
 
     pub fn terrain(&self, x: i32, y: i32) -> Terrain {
         // Ordinals are only ever written from valid Terrain values.
-        Terrain::from_ordinal(self.terrain[idx(x, y)]).unwrap_or(Terrain::Grass)
+        Terrain::from_ordinal(self.terrain.get(idx(x, y))).unwrap_or(Terrain::Grass)
     }
 
     pub fn set_terrain(&mut self, x: i32, y: i32, terrain: Terrain) {
-        self.terrain[idx(x, y)] = terrain.ordinal();
+        self.terrain.set(idx(x, y), terrain.ordinal());
     }
 
     /// The y coordinate of the highest water (or lava) block; at or below the
     /// terrain height means "dry".
     pub fn water_level(&self, x: i32, y: i32) -> i32 {
-        self.water[idx(x, y)] + self.min_height
+        self.water.get(idx(x, y)) as i32 + self.min_height
     }
 
     pub fn set_water_level(&mut self, x: i32, y: i32, level: i32) {
-        self.water[idx(x, y)] = level.clamp(self.min_height, self.max_height - 1) - self.min_height;
+        let offset = level.clamp(self.min_height, self.max_height - 1) - self.min_height;
+        self.water.set(idx(x, y), offset as u16);
     }
 
     pub fn layer_value(&self, layer: &LayerDef, x: i32, y: i32) -> u8 {
@@ -205,12 +388,31 @@ impl Tile {
             .collect()
     }
 
-    /// Drops layer buffers that only hold default values.
+    /// Shrinks storage: drops all-default layers, turns tile-wide constant
+    /// data into single values and narrows heights. Values are unchanged.
     pub fn compact(&mut self) {
         self.layers.retain(|id, buffer| {
             let default = crate::layers::find(id).map_or(0, |l| l.default);
             !buffer.is_all(default)
         });
+        for buffer in self.layers.values_mut() {
+            buffer.compact();
+        }
+        self.terrain.compact();
+        self.water.compact();
+        self.height.compact();
+    }
+
+    /// Approximate heap memory used by the tile's data.
+    pub fn heap_bytes(&self) -> usize {
+        self.terrain.bytes()
+            + self.height.bytes()
+            + self.water.bytes()
+            + self
+                .layers
+                .iter()
+                .map(|(id, b)| id.len() + b.bytes())
+                .sum::<usize>()
     }
 }
 
@@ -245,5 +447,36 @@ mod tests {
         t.set_layer_value(layers::FROST, 127, 127, 0);
         t.compact();
         assert!(t.layers().is_empty());
+    }
+
+    #[test]
+    fn compact_storage_keeps_values() {
+        let mut t = Tile::new(0, 0, -64, 320);
+        // A fresh tile: only the 16-bit height array is allocated.
+        assert_eq!(t.heap_bytes(), AREA * 2);
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                t.set_water_level(x, y, 62);
+                t.set_layer_value(layers::BIOME, x, y, 1);
+            }
+        }
+        t.set_terrain(3, 3, Terrain::Sand);
+        // A range of 300 blocks no longer fits 16-bit offsets: heights widen.
+        t.set_height(0, 0, -60.0);
+        t.set_height(1, 0, 250.0);
+        assert_eq!((t.height(0, 0), t.height(1, 0)), (-60.0, 250.0));
+        t.compact();
+        assert_eq!(t.water_level(100, 100), 62);
+        assert_eq!(t.layer_value(layers::BIOME, 50, 50), 1);
+        assert_eq!(t.terrain(3, 3), Terrain::Sand);
+        assert_eq!(t.terrain(4, 3), Terrain::Grass);
+        assert_eq!((t.height(0, 0), t.height(1, 0)), (-60.0, 250.0));
+        // Water and biome collapse to single values; terrain stays full.
+        assert_eq!(t.heap_bytes(), AREA * 4 + AREA + "Biome".len());
+        // Back within range: heights narrow again on compaction.
+        t.set_height(1, 0, 100.0);
+        t.compact();
+        assert_eq!(t.height(1, 0), 100.0);
+        assert_eq!(t.heap_bytes(), AREA * 2 + AREA + "Biome".len());
     }
 }

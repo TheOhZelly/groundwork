@@ -74,6 +74,25 @@ pub const PINE: &LayerDef = &LayerDef {
     default: 0,
 };
 
+/// Port of `Resources`: pockets of ores, dirt, gravel, water and lava in the
+/// subsurface. 0–15; 8 gives WorldPainter's default ore amounts.
+pub const RESOURCES: &LayerDef = &LayerDef {
+    id: "Resources",
+    description:
+        "underground ores, dirt, gravel, water and lava pockets; 8 is normal, 15 is twice as rich",
+    size: DataSize::Nibble,
+    default: 0,
+};
+/// Port of `Caverns`: large 3D-noise caves below the top layer.
+pub const CAVERNS: &LayerDef = &LayerDef {
+    id: "Caverns",
+    description: "underground caverns; 0–15 sets how much of the rock is hollowed out",
+    size: DataSize::Nibble,
+    default: 0,
+};
+
+/// Paintable layers. Resources and Caverns join once the exporter supports
+/// them.
 pub const ALL: [&LayerDef; 6] = [FROST, VOID, FLOOD_WITH_LAVA, BIOME, DECIDUOUS, PINE];
 
 pub const TREE_LAYERS: [&LayerDef; 2] = [DECIDUOUS, PINE];

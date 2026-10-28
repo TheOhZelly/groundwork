@@ -36,17 +36,10 @@ impl Document {
         }
     }
 
-    /// Undo steps cost a full copy of the world, so allow fewer for big ones.
+    /// Snapshots share unchanged tiles, so an undo step only costs the tiles
+    /// that stroke touched.
     fn undo_limit(&self) -> usize {
-        match self
-            .world
-            .dimension(OVERWORLD)
-            .map_or(0, |d| d.tile_count())
-        {
-            0..=64 => 30,
-            65..=256 => 10,
-            _ => 4,
-        }
+        100
     }
 
     fn snapshot(&mut self) {
@@ -115,6 +108,9 @@ pub struct App {
     export_job: Option<ExportJob>,
     toasts: Vec<Toast>,
     allow_close: bool,
+    /// Last window title sent; resending it every frame makes the window
+    /// system wake the app again, so it would never go idle.
+    window_title: String,
 }
 
 impl App {
@@ -133,6 +129,7 @@ impl App {
             export_job: None,
             toasts: Vec::new(),
             allow_close: false,
+            window_title: String::new(),
         };
         if let Some(path) = file {
             app.open_path(path);
@@ -172,7 +169,7 @@ impl App {
 
     fn set_document(&mut self, doc: Document) {
         self.doc = Some(doc);
-        self.view.reset(true);
+        self.view.reset();
         self.stroke = None;
     }
 
@@ -273,19 +270,16 @@ impl App {
         self.dialog = None;
     }
 
+    // The map view notices which tiles undo and redo replaced.
     fn undo(&mut self) {
         if let Some(doc) = self.doc.as_mut() {
-            if doc.undo() {
-                self.view.reset(false);
-            }
+            doc.undo();
         }
     }
 
     fn redo(&mut self) {
         if let Some(doc) = self.doc.as_mut() {
-            if doc.redo() {
-                self.view.reset(false);
-            }
+            doc.redo();
         }
     }
 
@@ -880,10 +874,7 @@ impl App {
                                         born: Instant::now(),
                                     });
                                 }
-                                Ok(_) => {
-                                    doc.dirty = true;
-                                    self.view.reset(false);
-                                }
+                                Ok(_) => doc.dirty = true,
                                 Err(e) => {
                                     doc.undo.pop();
                                     self.toasts.push(Toast {
@@ -1121,7 +1112,10 @@ impl eframe::App for App {
             Some(doc) => format!("{} — Groundwork", doc.title()),
             None => "Groundwork".to_owned(),
         };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
 
         self.shortcuts(ctx);
         self.poll_export(ctx);

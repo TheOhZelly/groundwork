@@ -6,6 +6,7 @@ use crate::terrain::Terrain;
 use crate::tile::{Tile, TILE_SIZE, TILE_SIZE_BITS, TILE_SIZE_MASK};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DimensionKind {
@@ -64,7 +65,16 @@ pub struct Dimension {
     pub top_layer_depth: i32,
     /// Whether to put a bedrock floor at `min_height`.
     pub bedrock: bool,
-    tiles: HashMap<(i32, i32), Tile>,
+    /// Tiles are shared copy-on-write: cloning a dimension (for undo, or to
+    /// export in the background) only copies pointers, and the first edit to
+    /// a tile afterwards copies just that tile.
+    tiles: HashMap<(i32, i32), Arc<Tile>>,
+    /// Resources (ores) level applied everywhere, 0–15, in addition to the
+    /// painted Resources layer. WorldPainter's default for new worlds is 8.
+    pub resources_level: u8,
+    /// Caverns level applied everywhere, 0–15, in addition to the painted
+    /// Caverns layer.
+    pub caverns_level: u8,
 }
 
 /// Splits a block coordinate into (tile, offset-in-tile).
@@ -89,23 +99,60 @@ impl Dimension {
             top_layer_depth: 3,
             bedrock: kind != DimensionKind::End,
             tiles: HashMap::new(),
+            resources_level: if kind == DimensionKind::Overworld {
+                8
+            } else {
+                0
+            },
+            caverns_level: 0,
+        }
+    }
+
+    /// Rebuilds a dimension saved in format version 1, which predates the
+    /// resources and caverns settings.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_v1(
+        kind: DimensionKind,
+        min_height: i32,
+        max_height: i32,
+        seed: u64,
+        subsurface_block: String,
+        top_layer_depth: i32,
+        bedrock: bool,
+        tiles: HashMap<(i32, i32), Tile>,
+    ) -> Self {
+        Dimension {
+            subsurface_block,
+            top_layer_depth,
+            bedrock,
+            tiles: tiles.into_iter().map(|(k, t)| (k, Arc::new(t))).collect(),
+            ..Dimension::new(kind, min_height, max_height, seed)
         }
     }
 
     pub fn tile(&self, tx: i32, ty: i32) -> Option<&Tile> {
+        self.tiles.get(&(tx, ty)).map(|t| &**t)
+    }
+
+    /// The shared handle of a tile. Two handles that are `Arc::ptr_eq` hold
+    /// identical contents, which lets callers skip unchanged tiles cheaply.
+    pub fn tile_handle(&self, tx: i32, ty: i32) -> Option<&Arc<Tile>> {
         self.tiles.get(&(tx, ty))
     }
 
+    /// Mutable access, copying the tile first if it is shared.
     pub fn tile_mut(&mut self, tx: i32, ty: i32) -> Option<&mut Tile> {
-        self.tiles.get_mut(&(tx, ty))
+        self.tiles.get_mut(&(tx, ty)).map(Arc::make_mut)
     }
 
     /// Adds an empty tile if none exists yet. Returns the tile.
     pub fn ensure_tile(&mut self, tx: i32, ty: i32) -> &mut Tile {
         let (min, max) = (self.min_height, self.max_height);
-        self.tiles
-            .entry((tx, ty))
-            .or_insert_with(|| Tile::new(tx, ty, min, max))
+        Arc::make_mut(
+            self.tiles
+                .entry((tx, ty))
+                .or_insert_with(|| Arc::new(Tile::new(tx, ty, min, max))),
+        )
     }
 
     pub fn insert_tile(&mut self, tile: Tile) {
@@ -113,11 +160,11 @@ impl Dimension {
             (tile.min_height(), tile.max_height()),
             (self.min_height, self.max_height)
         );
-        self.tiles.insert((tile.x(), tile.y()), tile);
+        self.tiles.insert((tile.x(), tile.y()), Arc::new(tile));
     }
 
     pub fn remove_tile(&mut self, tx: i32, ty: i32) -> Option<Tile> {
-        self.tiles.remove(&(tx, ty))
+        self.tiles.remove(&(tx, ty)).map(Arc::unwrap_or_clone)
     }
 
     pub fn tile_count(&self) -> usize {
@@ -132,11 +179,31 @@ impl Dimension {
     }
 
     pub fn tiles(&self) -> impl Iterator<Item = &Tile> {
-        self.tiles.values()
+        self.tiles.values().map(|t| &**t)
     }
 
+    /// Mutable access to every tile; copies any that are shared.
     pub fn tiles_mut(&mut self) -> impl Iterator<Item = &mut Tile> {
-        self.tiles.values_mut()
+        self.tiles.values_mut().map(Arc::make_mut)
+    }
+
+    /// Compacts every tile that is not shared with a snapshot (see
+    /// [`Tile::compact`]). Shared tiles are left alone rather than copied.
+    pub fn compact(&mut self) {
+        for tile in self.tiles.values_mut() {
+            if let Some(tile) = Arc::get_mut(tile) {
+                tile.compact();
+            }
+        }
+    }
+
+    /// Approximate memory used by tile data, counting shared tiles once
+    /// per dimension.
+    pub fn heap_bytes(&self) -> usize {
+        self.tiles
+            .values()
+            .map(|t| std::mem::size_of::<Tile>() + t.heap_bytes())
+            .sum()
     }
 
     /// Block extent covered by tiles, if any.
@@ -160,12 +227,14 @@ impl Dimension {
 
     fn column(&self, x: i32, y: i32) -> Option<(&Tile, i32, i32)> {
         let ((tx, lx), (ty, ly)) = (split(x), split(y));
-        self.tiles.get(&(tx, ty)).map(|t| (t, lx, ly))
+        self.tiles.get(&(tx, ty)).map(|t| (&**t, lx, ly))
     }
 
     fn column_mut(&mut self, x: i32, y: i32) -> Option<(&mut Tile, i32, i32)> {
         let ((tx, lx), (ty, ly)) = (split(x), split(y));
-        self.tiles.get_mut(&(tx, ty)).map(|t| (t, lx, ly))
+        self.tiles
+            .get_mut(&(tx, ty))
+            .map(|t| (Arc::make_mut(t), lx, ly))
     }
 
     pub fn contains(&self, x: i32, y: i32) -> bool {
@@ -256,5 +325,34 @@ mod tests {
                 y1: -1
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod sharing_tests {
+    use super::*;
+
+    #[test]
+    fn clones_share_tiles_until_written() {
+        let mut a = Dimension::new(DimensionKind::Overworld, -64, 320, 1);
+        a.ensure_tile(0, 0);
+        a.ensure_tile(1, 0);
+        let b = a.clone();
+        assert!(Arc::ptr_eq(
+            a.tile_handle(0, 0).unwrap(),
+            b.tile_handle(0, 0).unwrap()
+        ));
+        a.set_height_at(5, 5, 90.0);
+        // Only the written tile was copied; the snapshot is unchanged.
+        assert!(!Arc::ptr_eq(
+            a.tile_handle(0, 0).unwrap(),
+            b.tile_handle(0, 0).unwrap()
+        ));
+        assert!(Arc::ptr_eq(
+            a.tile_handle(1, 0).unwrap(),
+            b.tile_handle(1, 0).unwrap()
+        ));
+        assert_eq!(a.height_at(5, 5), Some(90.0));
+        assert_eq!(b.height_at(5, 5), Some(-64.0));
     }
 }

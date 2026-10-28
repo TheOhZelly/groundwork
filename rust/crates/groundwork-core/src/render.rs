@@ -117,16 +117,28 @@ pub fn render(dim: &Dimension, scale: u32, max_side: u32) -> Option<(Image, u32)
 /// Renders one tile at one pixel per block into `out` (RGBA, 128×128).
 /// Returns false, leaving `out` untouched, if there is no such tile.
 pub fn render_tile(dim: &Dimension, tx: i32, ty: i32, out: &mut [u8]) -> bool {
+    render_tile_lod(dim, tx, ty, 1, out)
+}
+
+/// Renders one tile sampling every `step` blocks (1, 2, 4, …, 128) into
+/// `out`, which must hold `(128 / step)²` RGBA pixels. Zoomed-out views use
+/// this to avoid rendering and storing detail the screen cannot show.
+pub fn render_tile_lod(dim: &Dimension, tx: i32, ty: i32, step: i32, out: &mut [u8]) -> bool {
     use crate::tile::TILE_SIZE;
-    assert_eq!(out.len(), (TILE_SIZE * TILE_SIZE * 4) as usize);
+    assert!(
+        step > 0 && TILE_SIZE % step == 0,
+        "step must divide the tile size"
+    );
+    let side = TILE_SIZE / step;
+    assert_eq!(out.len(), (side * side * 4) as usize);
     if dim.tile(tx, ty).is_none() {
         return false;
     }
-    for ly in 0..TILE_SIZE {
-        for lx in 0..TILE_SIZE {
-            let i = ((ly * TILE_SIZE + lx) * 4) as usize;
-            let rgb = column_colour(dim, tx * TILE_SIZE + lx, ty * TILE_SIZE + ly, 1)
-                .unwrap_or([0, 0, 0]);
+    for py in 0..side {
+        for px in 0..side {
+            let i = ((py * side + px) * 4) as usize;
+            let (x, y) = (tx * TILE_SIZE + px * step, ty * TILE_SIZE + py * step);
+            let rgb = column_colour(dim, x, y, step).unwrap_or([0, 0, 0]);
             out[i..i + 3].copy_from_slice(&rgb);
             out[i + 3] = 255;
         }

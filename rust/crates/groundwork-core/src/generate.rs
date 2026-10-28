@@ -106,6 +106,7 @@ pub fn generate(opts: &GenerateOptions) -> Result<Dimension, String> {
                     );
                 }
             }
+            tile.compact();
             dim.insert_tile(tile);
         }
     }

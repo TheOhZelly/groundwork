@@ -10,8 +10,9 @@ use groundwork_export::{ExportOptions, McVersion, Outside};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
-/// Undo snapshots are whole-world clones, so keep a modest number.
-const MAX_UNDO: usize = 10;
+/// Undo snapshots share unchanged tiles, so each costs only what its edit
+/// touched.
+const MAX_UNDO: usize = 50;
 const MAX_TILES: u64 = 1024;
 const NO_WORLD: &str = "no world is open; use create_world or open_world first";
 
@@ -690,7 +691,7 @@ pub fn definitions() -> Vec<Value> {
                 "threads": { "type": "integer", "minimum": 1, "description": "Worker threads (default: all cores)" },
             }),
             &["path"], false),
-        tool("undo", "Undo", "Revert the last edit (up to 10 steps).", none(), json!({}), &[], false),
+        tool("undo", "Undo", "Revert the last edit (up to 50 steps).", none(), json!({}), &[], false),
     ]
 }
 

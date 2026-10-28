@@ -7,9 +7,23 @@ use eframe::egui::{
 };
 use groundwork_core::{render, Dimension, Extent, TILE_SIZE};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Tiles re-rendered per frame at most; the rest follow on later frames.
 const RENDER_BUDGET: usize = 48;
+/// Textures not drawn for this many frames are freed.
+const EVICT_AFTER_FRAMES: u64 = 300;
+
+/// A tile's texture and what it was rendered from.
+struct TileTexture {
+    handle: TextureHandle,
+    /// Blocks per texel: 1 at full detail, up to 16 when zoomed far out.
+    step: i32,
+    /// Address of the tile data it shows. Tiles are copy-on-write, so a
+    /// different address means the tile changed (undo, redo, flood, …).
+    source: usize,
+    last_drawn: u64,
+}
 pub const MIN_ZOOM: f32 = 0.05;
 pub const MAX_ZOOM: f32 = 32.0;
 
@@ -19,9 +33,10 @@ pub struct MapView {
     /// Screen pixels per block.
     pub zoom: f32,
     pub fit_pending: bool,
-    textures: HashMap<(i32, i32), TextureHandle>,
+    textures: HashMap<(i32, i32), TileTexture>,
     stale: HashSet<(i32, i32)>,
     buf: Vec<u8>,
+    frame: u64,
 }
 
 impl Default for MapView {
@@ -32,7 +47,8 @@ impl Default for MapView {
             fit_pending: true,
             textures: HashMap::new(),
             stale: HashSet::new(),
-            buf: vec![0; (TILE_SIZE * TILE_SIZE * 4) as usize],
+            buf: Vec::new(),
+            frame: 0,
         }
     }
 }
@@ -44,14 +60,23 @@ pub struct Overlay {
 }
 
 impl MapView {
-    /// Forget all textures, e.g. after loading a different world or undo.
-    pub fn reset(&mut self, refit: bool) {
-        self.stale.extend(self.textures.keys().copied());
-        if refit {
-            self.textures.clear();
-            self.stale.clear();
-            self.fit_pending = true;
+    /// Forgets all textures and refits the view, for a newly opened world.
+    /// (Undo, redo and other whole-tile changes need no call: changed tiles
+    /// are detected automatically.)
+    pub fn reset(&mut self) {
+        self.textures.clear();
+        self.stale.clear();
+        self.fit_pending = true;
+    }
+
+    /// Blocks per texel for the current zoom: the coarsest power of two that
+    /// still gives at least one texel per screen pixel.
+    fn lod_step(&self) -> i32 {
+        let mut step = 1;
+        while step < 16 && self.zoom * (step * 2) as f32 <= 1.0 {
+            step *= 2;
         }
+        step
     }
 
     pub fn invalidate_area(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
@@ -107,52 +132,85 @@ impl MapView {
             minification: egui::TextureFilter::Linear,
             ..TextureOptions::NEAREST
         };
+        self.frame += 1;
+        let step = self.lod_step();
         let mut budget = RENDER_BUDGET;
         let mut pending = false;
         let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         for ty in ty0..=ty1 {
             for tx in tx0..=tx1 {
-                if dim.tile(tx, ty).is_none() {
+                let Some(tile) = dim.tile_handle(tx, ty) else {
                     continue;
-                }
+                };
                 let key = (tx, ty);
-                let needs_render = !self.textures.contains_key(&key) || self.stale.contains(&key);
+                let source = Arc::as_ptr(tile) as usize;
+                if let Some(texture) = self.textures.get(&key) {
+                    if texture.source != source {
+                        // The tile was replaced; its east and south
+                        // neighbours shade their edges from it too.
+                        self.stale.extend([key, (tx + 1, ty), (tx, ty + 1)]);
+                    }
+                }
+                let needs_render = match self.textures.get(&key) {
+                    None => true,
+                    Some(texture) => texture.step != step || self.stale.contains(&key),
+                };
                 if needs_render {
                     if budget == 0 {
                         pending = true;
                     } else {
                         budget -= 1;
-                        render::render_tile(dim, tx, ty, &mut self.buf);
-                        let image = egui::ColorImage::from_rgba_unmultiplied(
-                            [TILE_SIZE as usize; 2],
-                            &self.buf,
-                        );
+                        let side = (TILE_SIZE / step) as usize;
+                        self.buf.resize(side * side * 4, 0);
+                        render::render_tile_lod(dim, tx, ty, step, &mut self.buf);
+                        let image = egui::ColorImage::from_rgba_unmultiplied([side; 2], &self.buf);
                         match self.textures.get_mut(&key) {
-                            Some(handle) => handle.set(image, options),
+                            Some(texture) => {
+                                texture.handle.set(image, options);
+                                texture.step = step;
+                                texture.source = source;
+                            }
                             None => {
                                 let handle =
                                     ctx.load_texture(format!("tile {tx},{ty}"), image, options);
-                                self.textures.insert(key, handle);
+                                self.textures.insert(
+                                    key,
+                                    TileTexture {
+                                        handle,
+                                        step,
+                                        source,
+                                        last_drawn: 0,
+                                    },
+                                );
                             }
                         }
                         self.stale.remove(&key);
                     }
                 }
-                if let Some(handle) = self.textures.get(&key) {
-                    let min = self
-                        .world_to_screen(rect, tx as f32 * ts, ty as f32 * ts)
-                        .round();
-                    let max = self
-                        .world_to_screen(rect, (tx + 1) as f32 * ts, (ty + 1) as f32 * ts)
-                        .round();
+                let min = self
+                    .world_to_screen(rect, tx as f32 * ts, ty as f32 * ts)
+                    .round();
+                let max = self
+                    .world_to_screen(rect, (tx + 1) as f32 * ts, (ty + 1) as f32 * ts)
+                    .round();
+                if let Some(texture) = self.textures.get_mut(&key) {
+                    texture.last_drawn = self.frame;
                     painter.image(
-                        handle.id(),
+                        texture.handle.id(),
                         Rect::from_min_max(min, max),
                         uv,
                         Color32::WHITE,
                     );
                 }
             }
+        }
+        // Free textures that have been off screen for a while.
+        if self.frame.is_multiple_of(60) {
+            let frame = self.frame;
+            self.textures
+                .retain(|_, t| frame - t.last_drawn < EVICT_AFTER_FRAMES);
+            let textures = &self.textures;
+            self.stale.retain(|k| textures.contains_key(k));
         }
         if pending {
             ctx.request_repaint();

@@ -39,6 +39,27 @@ pub struct World {
 }
 
 impl World {
+    /// Reassembles a world from saved parts (used by format migrations).
+    pub(crate) fn from_parts(
+        name: String,
+        seed: u64,
+        spawn: (i32, i32),
+        game_mode: GameMode,
+        allow_cheats: bool,
+        map_features: bool,
+        dimensions: Vec<Dimension>,
+    ) -> Self {
+        World {
+            name,
+            seed,
+            spawn,
+            game_mode,
+            allow_cheats,
+            map_features,
+            dimensions,
+        }
+    }
+
     pub fn new(name: impl Into<String>, seed: u64, overworld: Dimension) -> Self {
         assert_eq!(overworld.kind, DimensionKind::Overworld);
         World {
