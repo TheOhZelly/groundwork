@@ -1,8 +1,8 @@
 //! Builds the NBT for one 1.18+ chunk from a tile.
 
+use crate::materials::{Materials, Plant};
 use groundwork_core::dimension::split;
 use groundwork_core::noise::hash01;
-use groundwork_core::terrain::Fidelity;
 use groundwork_core::{biomes, layers, Dimension, DimensionKind, Terrain, Tile};
 use groundwork_nbt::{compound, Compound, List, Tag, TAG_COMPOUND};
 use std::collections::BTreeSet;
@@ -11,11 +11,47 @@ use std::sync::Mutex;
 const AIR: &str = "minecraft:air";
 const STONE: &str = "minecraft:stone";
 
+/// Per-dimension state shared by every chunk of an export.
+pub struct Context {
+    pub data_version: i32,
+    pub materials: Materials,
+}
+
+/// Small plants and snow layers that trees may grow through.
+fn replaceable(name: &str) -> bool {
+    let id = name.split('[').next().unwrap_or(name);
+    matches!(
+        id,
+        "minecraft:snow"
+            | "minecraft:short_grass"
+            | "minecraft:tall_grass"
+            | "minecraft:fern"
+            | "minecraft:large_fern"
+            | "minecraft:dead_bush"
+            | "minecraft:dandelion"
+            | "minecraft:poppy"
+            | "minecraft:blue_orchid"
+            | "minecraft:allium"
+            | "minecraft:azure_bluet"
+            | "minecraft:red_tulip"
+            | "minecraft:orange_tulip"
+            | "minecraft:white_tulip"
+            | "minecraft:pink_tulip"
+            | "minecraft:oxeye_daisy"
+            | "minecraft:sunflower"
+            | "minecraft:lilac"
+            | "minecraft:rose_bush"
+            | "minecraft:peony"
+    )
+}
+
 /// Chunk-wide block palette plus per-block indices into it. Palette
 /// entries are block ids with optional properties, e.g.
 /// `minecraft:oak_leaves[persistent=true]`.
 pub(crate) struct Blocks {
     palette: Vec<String>,
+    /// Per palette entry: may trees overwrite it?
+    replaceable: Vec<bool>,
     min_y: i32,
     data: Vec<u16>,
 }
@@ -24,6 +60,7 @@ impl Blocks {
     fn new(min_y: i32, max_y: i32) -> Self {
         Blocks {
             palette: vec![AIR.to_owned()],
+            replaceable: vec![true],
             min_y,
             data: vec![0; ((max_y - min_y) * 256) as usize],
         }
@@ -34,6 +71,7 @@ impl Blocks {
             Some(i) => i as u16,
             None => {
                 self.palette.push(name.to_owned());
+                self.replaceable.push(replaceable(name));
                 (self.palette.len() - 1) as u16
             }
         }
@@ -47,14 +85,14 @@ impl Blocks {
         self.data[(((y - self.min_y) * 256) + z * 16 + x) as usize] = id;
     }
 
-    /// Places a block only where there is air, so trees never cut into
-    /// terrain or water. Coordinates are chunk-local; out-of-range ones are
-    /// ignored.
+    /// Places a block only where there is air or a small plant, so trees
+    /// never cut into terrain or water. Coordinates are chunk-local;
+    /// out-of-range ones are ignored.
     pub(crate) fn set_if_air(&mut self, x: i32, y: i32, z: i32, id: u16) {
         let max_y = self.min_y + (self.data.len() / 256) as i32;
         if (0..16).contains(&x) && (0..16).contains(&z) && (self.min_y..max_y).contains(&y) {
             let i = (((y - self.min_y) * 256) + z * 16 + x) as usize;
-            if self.data[i] == 0 {
+            if self.replaceable[self.data[i] as usize] {
                 self.data[i] = id;
             }
         }
@@ -69,7 +107,7 @@ pub fn build(
     chunk_z: i32,
     min_y: i32,
     max_y: i32,
-    data_version: i32,
+    ctx: &Context,
     warnings: &Mutex<Vec<String>>,
 ) -> Compound {
     let mut blocks = Blocks::new(min_y, max_y);
@@ -114,12 +152,6 @@ pub fn build(
                     (STONE, STONE)
                 }
             };
-            if info.fidelity == Fidelity::Approximate {
-                problems.insert(format!(
-                    "{} mixes several materials in WorldPainter; Groundwork uses {} for now",
-                    info.name, top
-                ));
-            }
             // Minecraft turns submerged grass and mycelium into dirt on random
             // ticks anyway; do it up front. (Java WorldPainter leaves this to
             // the game.)
@@ -149,8 +181,17 @@ pub fn build(
                     bedrock_id
                 } else {
                     match height - y {
-                        0 => top_id,
-                        d if d < depth_limit => under_id,
+                        d if d < depth_limit => {
+                            match ctx.materials.top_layer_block(terrain, wx, wz, y, height) {
+                                // Mixed terrains pick per block.
+                                Some("minecraft:grass_block") if d == 0 && underwater => {
+                                    blocks.id("minecraft:dirt")
+                                }
+                                Some(block) => blocks.id(block),
+                                None if d == 0 => top_id,
+                                None => under_id,
+                            }
+                        }
                         _ if deepslate_transition && is_deepslate(dim.seed, wx, y, wz) => {
                             deepslate_id
                         }
@@ -175,6 +216,12 @@ pub fn build(
             {
                 blocks.set(lx, height + 1, lz, snow_id);
             }
+            if !frost && !lava {
+                let depth = if underwater { water - height } else { 0 };
+                if let Some(plant) = ctx.materials.surface_plant(terrain, wx, wz, depth) {
+                    place_plant(&mut blocks, lx, lz, height, max_y, plant);
+                }
+            }
         }
     }
 
@@ -197,7 +244,7 @@ pub fn build(
     }
 
     compound! {
-        "DataVersion" => data_version,
+        "DataVersion" => ctx.data_version,
         "xPos" => chunk_x,
         "yPos" => min_y.div_euclid(16),
         "zPos" => chunk_z,
@@ -210,6 +257,36 @@ pub fn build(
         "block_ticks" => List::empty(TAG_COMPOUND),
         "fluid_ticks" => List::empty(TAG_COMPOUND),
         "structures" => compound! { "References" => compound! {}, "starts" => compound! {} },
+    }
+}
+
+fn place_plant(blocks: &mut Blocks, x: i32, z: i32, ground: i32, max_y: i32, plant: Plant) {
+    let fits = |height: i32| ground + height < max_y;
+    match plant {
+        Plant::Single(id) if fits(1) => {
+            let id = blocks.id(id);
+            blocks.set(x, ground + 1, z, id);
+        }
+        Plant::Double(id) if fits(2) => {
+            let lower = blocks.id(&format!("{id}[half=lower]"));
+            let upper = blocks.id(&format!("{id}[half=upper]"));
+            blocks.set(x, ground + 1, z, lower);
+            blocks.set(x, ground + 2, z, upper);
+        }
+        Plant::Stack(id, height) if fits(height) => {
+            let id = blocks.id(id);
+            for y in 1..=height {
+                blocks.set(x, ground + y, z, id);
+            }
+        }
+        Plant::Kelp(height) if fits(height) => {
+            let stem = blocks.id("minecraft:kelp_plant");
+            let tip = blocks.id("minecraft:kelp");
+            for y in 1..=height {
+                blocks.set(x, ground + y, z, if y == height { tip } else { stem });
+            }
+        }
+        _ => {}
     }
 }
 

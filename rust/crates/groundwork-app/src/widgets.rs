@@ -90,8 +90,8 @@ pub fn terrain_picker(
                 {
                     continue;
                 }
-                let note = if info.fidelity == Fidelity::Approximate {
-                    "simplified"
+                let note = if info.fidelity == Fidelity::Mixed {
+                    "mix"
                 } else {
                     ""
                 };

@@ -28,8 +28,9 @@ for colour in ["WHITE", "ORANGE", "MAGENTA", "LIGHT_BLUE", "YELLOW", "LIME", "PI
                "LIGHT_GREY", "CYAN", "PURPLE", "BLUE", "BROWN", "GREEN", "RED", "BLACK"]:
     BLOCKS[colour + "_CLAY"] = colour.lower().replace("grey", "gray") + "_terracotta"
 
-# Terrains whose Java implementation mixes several materials with noise. Until
-# that logic is ported they export as a single representative top/under pair.
+# Terrains whose Java implementation mixes several materials with noise or
+# adds plants. The exporter implements them; the top/under pair here is only
+# their representative colour for previews.
 APPROXIMATIONS = {
     "GRASS": ("grass_block", "grass_block"), "ROCK": ("stone", "stone"), "SNOW": ("stone", "stone"),
     "DESERT": ("sand", "sand"), "NETHERLIKE": ("netherrack", "netherrack"),
@@ -49,7 +50,7 @@ for m in pattern.finditer(text):
         continue
     if ident in APPROXIMATIONS:
         top, under = APPROXIMATIONS[ident]
-        rows.append((ident, display, top, under, "Approximate"))
+        rows.append((ident, display, top, under, "Mixed"))
         continue
     top_c = args[1].replace("Material.", "")
     under_c = args[2].replace("Material.", "")

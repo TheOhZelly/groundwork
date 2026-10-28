@@ -527,7 +527,7 @@ fn list_terrains() -> Output {
                 "id": t.id,
                 "name": t.name,
                 "surface": t.top,
-                "approximated": t.fidelity == Fidelity::Approximate,
+                "mixed": t.fidelity == Fidelity::Mixed,
             })
         })
         .collect();

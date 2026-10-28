@@ -10,6 +10,7 @@
 
 mod chunk;
 mod level;
+mod materials;
 mod trees;
 
 use groundwork_core::{Dimension, DimensionKind, World, TILE_SIZE};
@@ -234,7 +235,10 @@ fn export_dimension(
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()))
         .clamp(1, regions.len().max(1));
-    let data_version = options.version.data_version();
+    let ctx = chunk::Context {
+        data_version: options.version.data_version(),
+        materials: materials::Materials::new(dim.seed),
+    };
     let next = Mutex::new(regions.iter());
     let chunk_total = Mutex::new(0usize);
     let first_error: Mutex<Option<Error>> = Mutex::new(None);
@@ -247,16 +251,7 @@ fn export_dimension(
                 if first_error.lock().unwrap().is_some() {
                     break;
                 }
-                match export_region(
-                    dim,
-                    region_dir,
-                    rx,
-                    rz,
-                    min_y,
-                    max_y,
-                    data_version,
-                    warnings,
-                ) {
+                match export_region(dim, region_dir, rx, rz, min_y, max_y, &ctx, warnings) {
                     Ok(n) => {
                         *chunk_total.lock().unwrap() += n;
                         tick();
@@ -282,7 +277,7 @@ fn export_region(
     rz: i32,
     min_y: i32,
     max_y: i32,
-    data_version: i32,
+    ctx: &chunk::Context,
     warnings: &Mutex<Vec<String>>,
 ) -> Result<usize, Error> {
     let path = region_dir.join(groundwork_anvil::region_file_name(rx, rz));
@@ -298,16 +293,8 @@ fn export_region(
                 for cx in 0..chunks_per_tile {
                     let chunk_x = tx * chunks_per_tile + cx;
                     let chunk_z = ty * chunks_per_tile + cz;
-                    let nbt = chunk::build(
-                        dim,
-                        tile,
-                        chunk_x,
-                        chunk_z,
-                        min_y,
-                        max_y,
-                        data_version,
-                        warnings,
-                    );
+                    let nbt =
+                        chunk::build(dim, tile, chunk_x, chunk_z, min_y, max_y, ctx, warnings);
                     region.write_chunk(split_region(chunk_x), split_region(chunk_z), &nbt)?;
                     count += 1;
                 }

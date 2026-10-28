@@ -11,9 +11,10 @@ use table::TABLE;
 pub enum Fidelity {
     /// A single top block over a single underground block, as in Java.
     Exact,
-    /// Java mixes several materials with noise; this exports one
-    /// representative top/under pair until that logic is ported.
-    Approximate,
+    /// Several materials mixed with noise, and/or plants on top. `top` and
+    /// `under` are only representative (for previews); the exporter has the
+    /// full rules.
+    Mixed,
     /// User-configured custom material; not supported yet.
     Custom,
 }
