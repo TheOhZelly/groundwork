@@ -1,0 +1,11 @@
+[package]
+name = "wp-anvil"
+description = "Minecraft Anvil region file (.mca) access (port of org.pepsoft.minecraft.RegionFile)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+flate2.workspace = true
+wp-nbt.workspace = true

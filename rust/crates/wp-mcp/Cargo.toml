@@ -1,0 +1,16 @@
+[package]
+name = "wp-mcp"
+description = "Model Context Protocol server exposing WorldPainter world editing and Minecraft export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "worldpainter-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+wp-core.workspace = true
+wp-export.workspace = true
