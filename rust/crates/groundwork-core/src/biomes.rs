@@ -134,6 +134,128 @@ pub fn colour(id: u8) -> [u8; 3] {
     }
 }
 
+/// Groups for presenting biomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Category {
+    Plains,
+    Forest,
+    Dry,
+    Mountains,
+    Snowy,
+    Water,
+    Caves,
+    Nether,
+    End,
+}
+
+impl Category {
+    pub const ALL: [Category; 9] = [
+        Category::Plains,
+        Category::Forest,
+        Category::Dry,
+        Category::Mountains,
+        Category::Snowy,
+        Category::Water,
+        Category::Caves,
+        Category::Nether,
+        Category::End,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Category::Plains => "Plains",
+            Category::Forest => "Forest & jungle",
+            Category::Dry => "Dry",
+            Category::Mountains => "Mountains",
+            Category::Snowy => "Snowy",
+            Category::Water => "Water & coast",
+            Category::Caves => "Caves",
+            Category::Nether => "Nether",
+            Category::End => "End",
+        }
+    }
+
+    fn of(modern: &str) -> Category {
+        let n = modern.trim_start_matches("minecraft:");
+        match n {
+            "deep_dark" | "dripstone_caves" | "lush_caves" => Category::Caves,
+            "nether_wastes" | "soul_sand_valley" | "crimson_forest" | "warped_forest"
+            | "basalt_deltas" => Category::Nether,
+            "the_end" | "small_end_islands" | "end_midlands" | "end_highlands" | "end_barrens"
+            | "the_void" => Category::End,
+            "beach" | "snowy_beach" | "stony_shore" | "river" | "frozen_river" => Category::Water,
+            _ if n.contains("ocean") => Category::Water,
+            _ if n.starts_with("snowy_")
+                || n.contains("frozen")
+                || n == "ice_spikes"
+                || n == "grove"
+                || n == "jagged_peaks" =>
+            {
+                Category::Snowy
+            }
+            _ if n == "desert" || n.contains("badlands") || n.contains("savanna") => Category::Dry,
+            _ if n.starts_with("windswept") || n == "stony_peaks" || n == "meadow" => {
+                Category::Mountains
+            }
+            "plains" | "sunflower_plains" | "mushroom_fields" => Category::Plains,
+            _ => Category::Forest,
+        }
+    }
+}
+
+/// One Minecraft biome as presented to people.
+#[derive(Debug)]
+pub struct Entry {
+    /// The id painted into the Biome layer.
+    pub id: u8,
+    /// Current Minecraft name, e.g. "Old Growth Spruce Taiga".
+    pub name: String,
+    /// e.g. `minecraft:old_growth_spruce_taiga`.
+    pub minecraft_id: &'static str,
+    pub category: Category,
+}
+
+/// Every Minecraft biome exactly once, under its current name, grouped by
+/// category and sorted by name. WorldPainter's table keeps older names
+/// (e.g. "Desert Hills") for biomes Minecraft has since merged; those all
+/// map to the same biome and are left out here.
+pub fn catalogue() -> &'static [Entry] {
+    static CATALOGUE: std::sync::OnceLock<Vec<Entry>> = std::sync::OnceLock::new();
+    CATALOGUE.get_or_init(|| {
+        let mut seen = std::collections::HashSet::new();
+        let mut entries: Vec<Entry> = all()
+            .filter(|(_, _, modern)| seen.insert(*modern))
+            .map(|(id, _, modern)| Entry {
+                id,
+                name: modern
+                    .trim_start_matches("minecraft:")
+                    .split('_')
+                    .map(|w| {
+                        let mut c = w.chars();
+                        c.next()
+                            .map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                minecraft_id: modern,
+                category: Category::of(modern),
+            })
+            .collect();
+        entries.sort_by(|a, b| (a.category, &a.name).cmp(&(b.category, &b.name)));
+        entries
+    })
+}
+
+/// Current Minecraft name of a biome id, e.g. "Windswept Hills" for
+/// WorldPainter's "Mountain Edge".
+pub fn display_name(id: u8) -> Option<&'static str> {
+    let modern = modern_id(id)?;
+    catalogue()
+        .iter()
+        .find(|e| e.minecraft_id == modern)
+        .map(|e| e.name.as_str())
+}
+
 /// Finds a biome by numeric id, modern id (with or without `minecraft:`) or
 /// display name, ignoring case.
 pub fn find(query: &str) -> Option<u8> {
@@ -145,10 +267,13 @@ pub fn find(query: &str) -> Option<u8> {
         return Some(BIOME_AUTO);
     }
     let q = q.to_ascii_lowercase();
+    // "Old Growth Spruce Taiga", "old_growth_spruce_taiga" and
+    // "minecraft:old_growth_spruce_taiga" all name the same biome.
+    let underscored = q.replace(' ', "_");
     let namespaced = if q.contains(':') {
-        q.clone()
+        underscored
     } else {
-        format!("minecraft:{q}")
+        format!("minecraft:{underscored}")
     };
     all()
         .find(|(_, n, m)| {
@@ -235,6 +360,31 @@ mod tests {
         assert_ne!(
             colour(find("desert").unwrap()),
             colour(find("forest").unwrap())
+        );
+    }
+
+    #[test]
+    fn catalogue_lists_each_biome_once() {
+        let c = catalogue();
+        assert_eq!(c.len(), 65);
+        let names: std::collections::HashSet<_> = c.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names.len(), 65);
+        assert!(names.contains("Old Growth Spruce Taiga") && names.contains("Cherry Grove"));
+        assert!(!names.contains("Desert Hills"));
+        let cat = |name: &str| c.iter().find(|e| e.name == name).unwrap().category;
+        assert_eq!(cat("Cherry Grove"), Category::Forest);
+        assert_eq!(cat("Deep Frozen Ocean"), Category::Water);
+        assert_eq!(cat("Jagged Peaks"), Category::Snowy);
+        assert_eq!(cat("Wooded Badlands"), Category::Dry);
+        assert_eq!(cat("Lush Caves"), Category::Caves);
+        // Old ids show their current name; display names are findable.
+        assert_eq!(
+            display_name(find("minecraft:windswept_hills").unwrap()),
+            Some("Windswept Hills")
+        );
+        assert_eq!(
+            find("Old Growth Spruce Taiga").and_then(modern_id),
+            Some("minecraft:old_growth_spruce_taiga")
         );
     }
 

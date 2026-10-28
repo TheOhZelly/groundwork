@@ -652,7 +652,11 @@ impl App {
                                             "Caverns" => "🕳  Caverns — underground caves",
                                             _ => "🌿  Biome",
                                         };
-                                        ui.selectable_value(&mut self.paint.layer, i, label);
+                                        let chosen = ui.selectable_value(&mut self.paint.layer, i, label).clicked();
+                                        // Biomes are invisible in the terrain view, so show them.
+                                        if chosen && layer.id == layers::BIOME.id {
+                                            self.view.view = groundwork_core::render::View::Biomes;
+                                        }
                                     }
                                 });
                                 let layer = self.paint.layer_def();
@@ -676,6 +680,13 @@ impl App {
                                             ui,
                                             &mut self.paint.biome,
                                             &mut self.paint.biome_filter,
+                                        );
+                                        ui.label(
+                                            RichText::new(
+                                                "Paints solid areas. Right-drag sets them back to Automatic. B switches between biome and terrain view.",
+                                            )
+                                            .small()
+                                            .color(theme::MUTED),
                                         );
                                     });
                                 }
@@ -847,7 +858,7 @@ impl App {
                                 };
                                 ui.label(muted(format!(
                                     "🌿 {}{auto}",
-                                    biomes::name(id).unwrap_or("?")
+                                    biomes::display_name(id).unwrap_or("?")
                                 )));
                             }
                         }

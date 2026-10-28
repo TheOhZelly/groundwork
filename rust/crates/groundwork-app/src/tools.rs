@@ -220,9 +220,57 @@ pub fn apply(
                 (false, false) if layer.size == DataSize::Nibble => paint.layer_strength,
                 (false, false) => layer.size.max_value(),
             };
-            (ops::paint_layer(dim, shape, brush.falloff, layer, value) > 0).then_some(())?;
+            // Biomes paint as solid areas: dithered edges would scatter odd
+            // biome cells along every border.
+            let falloff = if layer.id == layers::BIOME.id {
+                ops::Falloff::Constant
+            } else {
+                brush.falloff
+            };
+            (ops::paint_layer(dim, shape, falloff, layer, value) > 0).then_some(())?;
             area
         }
         Tool::Water | Tool::Spawn => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use groundwork_core::generate::{generate, GenerateOptions};
+    use groundwork_core::render::column_biome;
+
+    #[test]
+    fn painting_a_biome_changes_it() {
+        let mut dim = generate(&GenerateOptions {
+            width_tiles: 1,
+            length_tiles: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let cherry = biomes::find("cherry_grove").unwrap();
+        let paint = PaintSettings {
+            layer: layers::ALL
+                .iter()
+                .position(|l| l.id == layers::BIOME.id)
+                .unwrap(),
+            biome: cherry,
+            ..PaintSettings::default()
+        };
+        let brush = Brush::default();
+        let mut stroke = StrokeState::default();
+        let area = apply(
+            Tool::Layer,
+            &mut dim,
+            64,
+            64,
+            0.016,
+            false,
+            &brush,
+            &paint,
+            &mut stroke,
+        );
+        assert!(area.is_some(), "the stroke reported no change");
+        assert_eq!(column_biome(&dim, 64, 64), Some(cherry));
     }
 }

@@ -643,12 +643,20 @@ fn list_terrains() -> Output {
 }
 
 fn list_biomes() -> Output {
-    let rows: Vec<Value> = biomes::all()
-        .map(|(id, name, modern)| json!({ "id": id, "name": name, "minecraft_id": modern }))
-        .collect();
-    text(
-        json!({ "biomes": rows, "auto": "use 'auto' (id 255) to let the exporter choose from terrain and water" }),
-    )
+    // Each Minecraft biome once, grouped; paint with the name or minecraft_id.
+    let mut groups = serde_json::Map::new();
+    for category in biomes::Category::ALL {
+        let rows: Vec<Value> = biomes::catalogue()
+            .iter()
+            .filter(|e| e.category == category)
+            .map(|e| json!({ "name": e.name, "minecraft_id": e.minecraft_id }))
+            .collect();
+        groups.insert(category.name().to_owned(), Value::Array(rows));
+    }
+    text(json!({
+        "biomes": groups,
+        "auto": "biome 'auto' lets the exporter choose from terrain, water depth, frost and forests",
+    }))
 }
 
 fn list_layers() -> Output {
@@ -744,7 +752,7 @@ pub fn definitions() -> Vec<Value> {
             json!({
                 "layer": { "type": "string", "enum": ["Frost", "Void", "FloodWithLava", "Biome", "Deciduous", "Pine", "Resources", "Caverns"] },
                 "value": { "type": "integer", "minimum": 0, "description": "Layer value (default: on)" },
-                "biome": { "type": "string", "description": "For the Biome layer: name, minecraft id or 'auto'" },
+                "biome": { "type": "string", "description": "For the Biome layer: a name from list_biomes (e.g. Cherry Grove), a minecraft id, or 'auto'" },
             }),
             &["layer"], false),
         tool("flood", "Flood", "Fill the basin containing x,y with water (or lava) up to level, like a bucket fill. A level at or below the ground drains the connected water instead.",

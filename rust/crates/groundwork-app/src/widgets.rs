@@ -109,24 +109,101 @@ pub fn terrain_picker(
         });
 }
 
+/// Biome chooser: the current choice up top, then search and every
+/// Minecraft biome once under its current name, grouped, with the colour the
+/// biome view uses.
 pub fn biome_picker(ui: &mut egui::Ui, selected: &mut u8, filter: &mut String) {
+    let current = (*selected != biomes::BIOME_AUTO)
+        .then(|| biomes::modern_id(*selected))
+        .flatten();
+    // The selected biome, large.
+    egui::Frame::none()
+        .fill(theme::BG)
+        .rounding(Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+                match current {
+                    Some(_) => ui.painter().rect(
+                        rect,
+                        Rounding::same(5.0),
+                        colour(biomes::colour(*selected)),
+                        Stroke::new(1.0f32, Color32::from_white_alpha(40)),
+                    ),
+                    None => ui.painter().rect_stroke(
+                        rect,
+                        Rounding::same(5.0),
+                        Stroke::new(1.0f32, theme::MUTED),
+                    ),
+                };
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let name = current
+                        .and_then(|_| biomes::display_name(*selected))
+                        .unwrap_or("Automatic");
+                    ui.label(egui::RichText::new(name).strong());
+                    let detail = current.unwrap_or("chosen from terrain, water and snow");
+                    ui.label(egui::RichText::new(detail).small().color(theme::MUTED));
+                });
+            });
+        });
+    ui.add_space(4.0);
     search_box(ui, filter, "Search biomes");
-    let needle = filter.to_lowercase();
+    let needle = filter.trim().to_lowercase();
+    let is_selected = |e: &biomes::Entry| current == Some(e.minecraft_id);
     egui::ScrollArea::vertical()
         .id_salt("biomes")
-        .max_height(260.0)
+        .max_height(380.0)
         .auto_shrink([false, true])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            let auto = (biomes::BIOME_AUTO, "Automatic", "from terrain");
-            let all =
-                std::iter::once(auto).chain(biomes::all().map(|(id, name, _)| (id, name, "")));
-            for (id, name, note) in all {
-                if !needle.is_empty() && !name.to_lowercase().contains(&needle) {
+            let auto_matches = needle.is_empty() || "automatic".contains(&needle);
+            if auto_matches
+                && row(
+                    ui,
+                    *selected == biomes::BIOME_AUTO,
+                    None,
+                    "Automatic",
+                    "from terrain",
+                )
+                .clicked()
+            {
+                *selected = biomes::BIOME_AUTO;
+            }
+            let matches = |e: &biomes::Entry| {
+                needle.is_empty()
+                    || e.name.to_lowercase().contains(&needle)
+                    || e.minecraft_id.contains(&needle.replace(' ', "_"))
+            };
+            for category in biomes::Category::ALL {
+                let entries: Vec<&biomes::Entry> = biomes::catalogue()
+                    .iter()
+                    .filter(|e| e.category == category && matches(e))
+                    .collect();
+                if entries.is_empty() {
                     continue;
                 }
-                if row(ui, *selected == id, None, name, note).clicked() {
-                    *selected = id;
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(category.name().to_uppercase())
+                        .small()
+                        .strong()
+                        .color(theme::MUTED),
+                );
+                for e in entries {
+                    if row(
+                        ui,
+                        is_selected(e),
+                        Some(colour(biomes::colour(e.id))),
+                        &e.name,
+                        "",
+                    )
+                    .clicked()
+                    {
+                        *selected = e.id;
+                    }
                 }
             }
         });
