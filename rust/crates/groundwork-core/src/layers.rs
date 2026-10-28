@@ -91,9 +91,16 @@ pub const CAVERNS: &LayerDef = &LayerDef {
     default: 0,
 };
 
-/// Paintable layers. Resources and Caverns join once the exporter supports
-/// them.
-pub const ALL: [&LayerDef; 6] = [FROST, VOID, FLOOD_WITH_LAVA, BIOME, DECIDUOUS, PINE];
+pub const ALL: [&LayerDef; 8] = [
+    FROST,
+    VOID,
+    FLOOD_WITH_LAVA,
+    BIOME,
+    DECIDUOUS,
+    PINE,
+    RESOURCES,
+    CAVERNS,
+];
 
 pub const TREE_LAYERS: [&LayerDef; 2] = [DECIDUOUS, PINE];
 

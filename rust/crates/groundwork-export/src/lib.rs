@@ -12,6 +12,7 @@ mod chunk;
 mod level;
 mod materials;
 mod trees;
+mod underground;
 
 use groundwork_core::{Dimension, DimensionKind, World, TILE_SIZE};
 use std::fmt;
@@ -238,6 +239,8 @@ fn export_dimension(
     let ctx = chunk::Context {
         data_version: options.version.data_version(),
         materials: materials::Materials::new(dim.seed),
+        // CavernsExporter seeds its noise with the world seed plus this.
+        caverns: groundwork_core::noise::PerlinNoise::new(dim.seed.wrapping_add(53_123_467)),
     };
     let next = Mutex::new(regions.iter());
     let chunk_total = Mutex::new(0usize);

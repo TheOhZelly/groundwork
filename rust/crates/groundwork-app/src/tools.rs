@@ -1,5 +1,6 @@
 //! Editing tools and how a brush stroke applies them.
 
+use groundwork_core::layers::DataSize;
 use groundwork_core::ops::{self, Falloff, Shape};
 use groundwork_core::{biomes, layers, Dimension, Terrain};
 
@@ -118,8 +119,8 @@ pub struct PaintSettings {
     pub biome_filter: String,
     pub water_level: i32,
     pub lava: bool,
-    /// Density for the tree layers, 1–15.
-    pub tree_density: u8,
+    /// Strength for 0–15 layers (forests, ores, caverns).
+    pub layer_strength: u8,
 }
 
 impl Default for PaintSettings {
@@ -132,7 +133,7 @@ impl Default for PaintSettings {
             biome_filter: String::new(),
             water_level: 62,
             lava: false,
-            tree_density: 10,
+            layer_strength: 8,
         }
     }
 }
@@ -216,9 +217,7 @@ pub fn apply(
                 (true, true) => biomes::BIOME_AUTO,
                 (true, false) => 0,
                 (false, true) => paint.biome,
-                (false, false) if layers::TREE_LAYERS.iter().any(|l| l.id == layer.id) => {
-                    paint.tree_density
-                }
+                (false, false) if layer.size == DataSize::Nibble => paint.layer_strength,
                 (false, false) => layer.size.max_value(),
             };
             (ops::paint_layer(dim, shape, brush.falloff, layer, value) > 0).then_some(())?;

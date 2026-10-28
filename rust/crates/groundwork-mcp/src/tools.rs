@@ -438,6 +438,12 @@ impl Server {
         if let Some(bedrock) = a.bool("bedrock")? {
             dim.bedrock = bedrock;
         }
+        if let Some(level) = a.i32("resources_level")? {
+            dim.resources_level = level.clamp(0, 15) as u8;
+        }
+        if let Some(level) = a.i32("caverns_level")? {
+            dim.caverns_level = level.clamp(0, 15) as u8;
+        }
         self.dirty = true;
         self.world_info()
     }
@@ -633,10 +639,10 @@ pub fn definitions() -> Vec<Value> {
             brush_properties(), json!({ "iterations": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Strength (default 2)" } }), &[], false),
         tool("paint_terrain", "Paint terrain", "Paint a terrain type (surface material). Partial falloff strength scatters the terrain.",
             brush_properties(), json!({ "terrain": { "type": "string", "description": "Terrain id or name, e.g. SAND, Bare Grass" } }), &["terrain"], false),
-        tool("paint_layer", "Paint layer", "Paint a layer: Frost, Void, FloodWithLava (value 1 to add, 0 to remove), Deciduous or Pine forest (value 0–15 sets tree density; 0 removes), or Biome (give biome).",
+        tool("paint_layer", "Paint layer", "Paint a layer: Frost, Void, FloodWithLava (value 1 to add, 0 to remove), Deciduous or Pine forest (value 0–15 sets tree density), Resources (ores; 8 is normal), Caverns (0–15 caves), or Biome (give biome).",
             brush_properties(),
             json!({
-                "layer": { "type": "string", "enum": ["Frost", "Void", "FloodWithLava", "Biome", "Deciduous", "Pine"] },
+                "layer": { "type": "string", "enum": ["Frost", "Void", "FloodWithLava", "Biome", "Deciduous", "Pine", "Resources", "Caverns"] },
                 "value": { "type": "integer", "minimum": 0, "description": "Layer value (default: on)" },
                 "biome": { "type": "string", "description": "For the Biome layer: name, minecraft id or 'auto'" },
             }),
@@ -671,6 +677,8 @@ pub fn definitions() -> Vec<Value> {
                 "subsurface_block": { "type": "string", "description": "Block below the top layer (default stone, with deepslate below y=0)" },
                 "top_layer_depth": { "type": "integer", "description": "Minimum depth of the terrain material (default 3)" },
                 "bedrock": { "type": "boolean", "description": "Bedrock floor at the bottom of the world" },
+                "resources_level": { "type": "integer", "minimum": 0, "maximum": 15, "description": "Ores everywhere underground (8 = WorldPainter's normal; 0 = none)" },
+                "caverns_level": { "type": "integer", "minimum": 0, "maximum": 15, "description": "Caverns everywhere underground (0 = none)" },
             }),
             &[], false),
         tool("render_preview", "Render preview", "Render a shaded top-down map of the world as a PNG image.",

@@ -15,6 +15,7 @@ const STONE: &str = "minecraft:stone";
 pub struct Context {
     pub data_version: i32,
     pub materials: Materials,
+    pub caverns: groundwork_core::noise::PerlinNoise,
 }
 
 /// Small plants and snow layers that trees may grow through.
@@ -77,8 +78,20 @@ impl Blocks {
         }
     }
 
-    fn name(&self, id: u16) -> &str {
+    pub(crate) fn name(&self, id: u16) -> &str {
         &self.palette[id as usize]
+    }
+
+    /// The block at chunk-local coordinates, if inside the chunk.
+    pub(crate) fn get(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+        let max_y = self.min_y + (self.data.len() / 256) as i32;
+        ((0..16).contains(&x) && (0..16).contains(&z) && (self.min_y..max_y).contains(&y))
+            .then(|| self.data[(((y - self.min_y) * 256) + z * 16 + x) as usize])
+    }
+
+    /// Overwrites a block at chunk-local coordinates (which must be inside).
+    pub(crate) fn put(&mut self, x: i32, y: i32, z: i32, id: u16) {
+        self.set(x, y, z, id);
     }
 
     fn set(&mut self, x: i32, y: i32, z: i32, id: u16) {
@@ -111,6 +124,10 @@ pub fn build(
     warnings: &Mutex<Vec<String>>,
 ) -> Compound {
     let mut blocks = Blocks::new(min_y, max_y);
+    let mut columns = crate::underground::Columns {
+        rock_top: [[min_y - 1; 16]; 16],
+        height: [[min_y; 16]; 16],
+    };
     let mut column_biomes = [[0u8; 4]; 4];
     let mut problems = BTreeSet::new();
     let deepslate_transition = dim.subsurface_block == STONE;
@@ -175,6 +192,8 @@ pub fn build(
             let ice_id = blocks.id("minecraft:ice");
             let snow_id = blocks.id("minecraft:snow");
             let depth_limit = dim.top_layer_depth + (hash01(dim.seed, wx, wz) * 4.0) as i32;
+            columns.rock_top[lz as usize][lx as usize] = height - depth_limit;
+            columns.height[lz as usize][lx as usize] = height;
 
             for y in min_y..=height {
                 let id = if y == min_y && dim.bedrock {
@@ -225,6 +244,16 @@ pub fn build(
         }
     }
 
+    crate::underground::resources(dim, &mut blocks, &columns, chunk_x, chunk_z, min_y);
+    crate::underground::caverns(
+        dim,
+        &ctx.caverns,
+        &mut blocks,
+        &columns,
+        chunk_x,
+        chunk_z,
+        min_y,
+    );
     crate::trees::place(dim, &mut blocks, chunk_x, chunk_z, max_y);
 
     if !problems.is_empty() {

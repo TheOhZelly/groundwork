@@ -322,3 +322,84 @@ fn endless_ocean_outside() {
     assert_eq!(-64 + total - 1, 62);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Counts blocks by name over the whole of one chunk.
+fn count_blocks(chunk: &groundwork_nbt::Compound, pred: impl Fn(&str) -> bool) -> usize {
+    let mut n = 0;
+    for y in -64..320 {
+        for z in 0..16 {
+            for x in 0..16 {
+                if pred(&block_at(chunk, x, y, z)) {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
+#[test]
+fn ores_and_caverns() {
+    let flat = GenerateOptions {
+        width_tiles: 1,
+        length_tiles: 1,
+        hilliness: 0.0,
+        base_height: 100.0,
+        water_level: -64,
+        terrain: Terrain::Stone,
+        seed: 11,
+        ..Default::default()
+    };
+    // Default: Resources level 8 everywhere, no caverns.
+    let world = World::new("Ores", 11, generate(&flat).unwrap());
+    let dir = temp_dir("ores");
+    export(&world, &dir, &ExportOptions::default()).unwrap();
+    let mut region =
+        groundwork_anvil::RegionFile::open_read_only(dir.join("region").join("r.0.0.mca")).unwrap();
+    let (mut ores, mut deep_ores, mut dirt, mut rock) = (0, 0, 0, 0);
+    for (cx, cz) in [(1, 1), (4, 2), (6, 6)] {
+        let chunk = region.read_chunk(cx, cz).unwrap().unwrap();
+        ores += count_blocks(&chunk, |b| b.ends_with("_ore") && !b.contains("deepslate"));
+        deep_ores += count_blocks(&chunk, |b| {
+            b.starts_with("minecraft:deepslate_") && b.ends_with("_ore")
+        });
+        dirt += count_blocks(&chunk, |b| b == "minecraft:dirt");
+        rock += count_blocks(&chunk, |b| {
+            b == "minecraft:stone" || b == "minecraft:deepslate"
+        });
+    }
+    let solid = (ores + deep_ores + dirt + rock) as f32;
+    // WorldPainter's table gives ~3% ores and ~5.7% dirt in the rock.
+    assert!(
+        ores > 0 && deep_ores > 0,
+        "ores {ores}, deepslate ores {deep_ores}"
+    );
+    let (ore_share, dirt_share) = ((ores + deep_ores) as f32 / solid, dirt as f32 / solid);
+    assert!((0.005..0.06).contains(&ore_share), "ore share {ore_share}");
+    assert!((0.02..0.1).contains(&dirt_share), "dirt share {dirt_share}");
+    std::fs::remove_dir_all(&dir).ok();
+
+    // Caverns at full strength hollow out a good part of the rock, but never
+    // break the surface or the bedrock floor.
+    let mut dim = generate(&flat).unwrap();
+    dim.resources_level = 0;
+    dim.caverns_level = 15;
+    let world = World::new("Caves", 11, dim);
+    let dir = temp_dir("caves");
+    export(&world, &dir, &ExportOptions::default()).unwrap();
+    let mut region =
+        groundwork_anvil::RegionFile::open_read_only(dir.join("region").join("r.0.0.mca")).unwrap();
+    let chunk = region.read_chunk(3, 3).unwrap().unwrap();
+    let hollow = (-60..90)
+        .flat_map(|y| (0..16).map(move |x| (x, y)))
+        .filter(|&(x, y)| block_at(&chunk, x, y, 5) == "minecraft:air")
+        .count();
+    assert!(hollow > 200, "only {hollow} hollow blocks");
+    for x in 0..16 {
+        for z in 0..16 {
+            assert_eq!(block_at(&chunk, x, -64, z), "minecraft:bedrock");
+            assert_eq!(block_at(&chunk, x, 100, z), "minecraft:stone");
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

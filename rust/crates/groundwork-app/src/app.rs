@@ -562,29 +562,25 @@ impl App {
                                             "FloodWithLava" => "🔥  Lava instead of water",
                                             "Deciduous" => "🌳  Deciduous forest — oak, birch",
                                             "Pine" => "🌲  Pine forest — spruce",
+                                            "Resources" => "💎  Ores — underground pockets",
+                                            "Caverns" => "🕳  Caverns — underground caves",
                                             _ => "🌿  Biome",
                                         };
                                         ui.selectable_value(&mut self.paint.layer, i, label);
                                     }
                                 });
-                                if layers::TREE_LAYERS
-                                    .iter()
-                                    .any(|l| l.id == self.paint.layer_def().id)
-                                {
+                                let layer = self.paint.layer_def();
+                                if layer.size == layers::DataSize::Nibble {
+                                    let hint = match layer.id {
+                                        "Resources" => "8 is WorldPainter's normal amount; 15 is nearly twice as rich",
+                                        "Caverns" => "higher hollows out more rock; right-drag removes",
+                                        _ => "15 is a dense forest; right-drag clears trees",
+                                    };
                                     ui.add_space(6.0);
-                                    theme::card(ui, "Density", |ui| {
+                                    theme::card(ui, "Strength", |ui| {
                                         ui.spacing_mut().slider_width = ui.available_width() - 60.0;
-                                        ui.add(egui::Slider::new(
-                                            &mut self.paint.tree_density,
-                                            1..=15,
-                                        ));
-                                        ui.label(
-                                            RichText::new(
-                                                "15 is a dense forest; right-drag clears trees",
-                                            )
-                                            .small()
-                                            .color(theme::MUTED),
-                                        );
+                                        ui.add(egui::Slider::new(&mut self.paint.layer_strength, 1..=15));
+                                        ui.label(RichText::new(hint).small().color(theme::MUTED));
                                     });
                                 }
                                 if self.paint.layer_def().id == layers::BIOME.id {
@@ -681,6 +677,20 @@ impl App {
                                 changed |= ui
                                     .checkbox(&mut w.map_features, "Structures outside the map")
                                     .changed();
+                            if let Some(d) = w.dimension_mut(OVERWORLD) {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Everywhere underground").small().color(theme::MUTED));
+                                ui.horizontal(|ui| {
+                                    ui.add_sized([60.0, 20.0], egui::Label::new("Ores"));
+                                    ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(60.0);
+                                    changed |= ui.add(egui::Slider::new(&mut d.resources_level, 0..=15)).changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.add_sized([60.0, 20.0], egui::Label::new("Caverns"));
+                                    ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(60.0);
+                                    changed |= ui.add(egui::Slider::new(&mut d.caverns_level, 0..=15)).changed();
+                                });
+                            }
                                 if let Some(d) = w.dimension(OVERWORLD) {
                                     if let Some(e) = d.extent() {
                                         ui.label(
