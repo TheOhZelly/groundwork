@@ -1,13 +1,13 @@
 //! Builds the NBT for one 1.18+ chunk from a tile.
 
 use crate::DATA_VERSION;
+use groundwork_core::dimension::split;
+use groundwork_core::noise::hash01;
+use groundwork_core::terrain::Fidelity;
+use groundwork_core::{biomes, layers, Dimension, DimensionKind, Terrain, Tile};
+use groundwork_nbt::{compound, Compound, List, Tag, TAG_COMPOUND};
 use std::collections::BTreeSet;
 use std::sync::Mutex;
-use wp_core::dimension::split;
-use wp_core::noise::hash01;
-use wp_core::terrain::Fidelity;
-use wp_core::{biomes, layers, Dimension, DimensionKind, Terrain, Tile};
-use wp_nbt::{compound, Compound, List, Tag, TAG_COMPOUND};
 
 const AIR: &str = "minecraft:air";
 const STONE: &str = "minecraft:stone";
@@ -101,7 +101,7 @@ pub fn build(
             };
             if info.fidelity == Fidelity::Approximate {
                 problems.insert(format!(
-                    "{} mixes several materials in WorldPainter; the Rust exporter uses {} for now",
+                    "{} mixes several materials in WorldPainter; Groundwork uses {} for now",
                     info.name, top
                 ));
             }

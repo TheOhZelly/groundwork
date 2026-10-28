@@ -2,13 +2,13 @@
 
 use crate::args::Args;
 use crate::base64;
+use groundwork_core::generate::{generate, GenerateOptions};
+use groundwork_core::ops::{self, Falloff};
+use groundwork_core::terrain::Fidelity;
+use groundwork_core::{biomes, layers, render, Dimension, DimensionKind, GameMode, Terrain, World};
+use groundwork_export::{ExportOptions, Outside};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
-use wp_core::generate::{generate, GenerateOptions};
-use wp_core::ops::{self, Falloff};
-use wp_core::terrain::Fidelity;
-use wp_core::{biomes, layers, render, Dimension, DimensionKind, GameMode, Terrain, World};
-use wp_export::{ExportOptions, Outside};
 
 /// Undo snapshots are whole-world clones, so keep a modest number.
 const MAX_UNDO: usize = 10;
@@ -242,8 +242,8 @@ impl Server {
     fn open_world(&mut self, a: &Args) -> Result<Output, String> {
         self.check_unsaved(a)?;
         let path = PathBuf::from(a.req_str("path")?);
-        let world =
-            wp_core::io::load(&path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        let world = groundwork_core::io::load(&path)
+            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
         let name = world.name.clone();
         self.world = Some(world);
         self.path = Some(path);
@@ -256,11 +256,11 @@ impl Server {
         let path = match a.str("path")? {
             Some(p) => PathBuf::from(p),
             None => self.path.clone().ok_or(
-                "this world has not been saved before; pass a path (e.g. C:/maps/island.wprs)",
+                "this world has not been saved before; pass a path (e.g. C:/maps/island.gwork)",
             )?,
         };
         let world = self.world.as_ref().ok_or(NO_WORLD)?;
-        wp_core::io::save(world, &path)
+        groundwork_core::io::save(world, &path)
             .map_err(|e| format!("cannot save to {}: {e}", path.display()))?;
         self.path = Some(path.clone());
         self.dirty = false;
@@ -391,8 +391,8 @@ impl Server {
                         continue;
                     }
                     let tile = d.ensure_tile(tx, ty);
-                    for ly in 0..wp_core::TILE_SIZE {
-                        for lx in 0..wp_core::TILE_SIZE {
+                    for ly in 0..groundwork_core::TILE_SIZE {
+                        for lx in 0..groundwork_core::TILE_SIZE {
                             tile.set_height(lx, ly, height);
                             tile.set_water_level(lx, ly, water);
                             tile.set_terrain(lx, ly, terrain);
@@ -483,11 +483,11 @@ impl Server {
             overwrite: a.bool("overwrite")?.unwrap_or(false),
         };
         let started = std::time::Instant::now();
-        let report =
-            wp_export::export(world, &path, &options).map_err(|e| format!("export failed: {e}"))?;
+        let report = groundwork_export::export(world, &path, &options)
+            .map_err(|e| format!("export failed: {e}"))?;
         Ok(text(json!({
             "exported_to": report.path.display().to_string(),
-            "minecraft_version": wp_export::VERSION_NAME,
+            "minecraft_version": groundwork_export::VERSION_NAME,
             "chunks": report.chunks,
             "region_files": report.regions,
             "seconds": (started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
@@ -605,10 +605,10 @@ pub fn definitions() -> Vec<Value> {
                 "max_height": { "type": "integer", "description": "Top of the world, exclusive (default 320)" },
             }),
             &["name"], false),
-        tool("open_world", "Open world", "Open a world saved with save_world (.wprs). Java WorldPainter .world files are not supported yet.",
+        tool("open_world", "Open world", "Open a world saved with save_world (.gwork). WorldPainter .world files are not supported yet.",
             none(), json!({ "path": { "type": "string" }, "discard_unsaved": discard["discard_unsaved"] }), &["path"], false),
         tool("save_world", "Save world", "Save the open world. Without a path, saves to where it was last saved or opened.",
-            none(), json!({ "path": { "type": "string", "description": "File path, conventionally ending in .wprs" } }), &[], false),
+            none(), json!({ "path": { "type": "string", "description": "File path, conventionally ending in .gwork" } }), &[], false),
         tool("world_info", "World info", "Name, seed, spawn, extent, height ranges and save state of the open world.", none(), json!({}), &[], true),
         tool("list_terrains", "List terrains", "Terrain types that can be painted.", none(), json!({}), &[], true),
         tool("list_biomes", "List biomes", "Biomes that can be painted with the Biome layer.", none(), json!({}), &[], true),
@@ -758,10 +758,10 @@ mod tests {
             .unwrap()
             .contains("\"undo_steps\": 5"));
 
-        let dir = std::env::temp_dir().join(format!("wp-mcp-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("groundwork-mcp-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("isle.wprs");
+        let file = dir.join("isle.gwork");
         ok(&mut s, "save_world", json!({ "path": file }));
         ok(&mut s, "open_world", json!({ "path": file }));
         let export = ok(

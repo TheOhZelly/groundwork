@@ -1,16 +1,16 @@
 use super::*;
-use wp_core::generate::{generate, GenerateOptions};
-use wp_core::{layers, ops, Terrain};
-use wp_nbt::Tag;
+use groundwork_core::generate::{generate, GenerateOptions};
+use groundwork_core::{layers, ops, Terrain};
+use groundwork_nbt::Tag;
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("wp-export-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("groundwork-export-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
 
 /// Decodes the block at (x, y, z) local to a chunk from its NBT.
-fn block_at(chunk: &wp_nbt::Compound, x: i32, y: i32, z: i32) -> String {
+fn block_at(chunk: &groundwork_nbt::Compound, x: i32, y: i32, z: i32) -> String {
     let sections = chunk["sections"].as_list().unwrap();
     let section = sections
         .items
@@ -91,13 +91,13 @@ fn exports_a_loadable_world_layout() {
     assert_eq!(report.chunks, 2 * 64);
     assert_eq!(report.regions, 2); // tiles -1 and 0 fall in regions -1 and 0
 
-    let (_, level) = wp_nbt::read_file(dir.join("level.dat")).unwrap();
+    let (_, level) = groundwork_nbt::read_file(dir.join("level.dat")).unwrap();
     let data = level["Data"].as_compound().unwrap();
     assert_eq!(data["LevelName"].as_str(), Some("Export test"));
     assert_eq!(data["SpawnY"], Tag::Int(71));
 
     let mut region =
-        wp_anvil::RegionFile::open_read_only(dir.join("region").join("r.0.0.mca")).unwrap();
+        groundwork_anvil::RegionFile::open_read_only(dir.join("region").join("r.0.0.mca")).unwrap();
     assert_eq!(region.chunk_count(), 64);
     let chunk = region.read_chunk(0, 0).unwrap().unwrap();
     assert_eq!(chunk["Status"].as_str(), Some("minecraft:full"));
@@ -191,13 +191,13 @@ fn void_layer_and_warnings() {
         report.warnings
     );
     let mut region =
-        wp_anvil::RegionFile::open_read_only(dir.join("region").join("r.0.0.mca")).unwrap();
+        groundwork_anvil::RegionFile::open_read_only(dir.join("region").join("r.0.0.mca")).unwrap();
     let chunk = region.read_chunk(0, 0).unwrap().unwrap();
     assert_eq!(block_at(&chunk, 0, -64, 0), "minecraft:air");
     assert_eq!(block_at(&chunk, 15, 64, 15), "minecraft:air");
     let next = region.read_chunk(1, 0).unwrap().unwrap();
     assert_eq!(block_at(&next, 0, -64, 0), "minecraft:bedrock");
-    let (_, level) = wp_nbt::read_file(dir.join("level.dat")).unwrap();
+    let (_, level) = groundwork_nbt::read_file(dir.join("level.dat")).unwrap();
     let gen = &level["Data"].as_compound().unwrap()["WorldGenSettings"]
         .as_compound()
         .unwrap()["dimensions"]

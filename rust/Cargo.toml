@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/wp-nbt",
-    "crates/wp-anvil",
-    "crates/wp-core",
-    "crates/wp-export",
-    "crates/wp-mcp",
+    "crates/groundwork-nbt",
+    "crates/groundwork-anvil",
+    "crates/groundwork-core",
+    "crates/groundwork-export",
+    "crates/groundwork-mcp",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-authors = ["WorldPainter contributors"]
+authors = ["Groundwork contributors"]
 
 [workspace.dependencies]
 flate2 = "1"
@@ -21,10 +21,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1.3"
 png = "0.17"
-wp-nbt = { path = "crates/wp-nbt" }
-wp-anvil = { path = "crates/wp-anvil" }
-wp-core = { path = "crates/wp-core" }
-wp-export = { path = "crates/wp-export" }
+groundwork-nbt = { path = "crates/groundwork-nbt" }
+groundwork-anvil = { path = "crates/groundwork-anvil" }
+groundwork-core = { path = "crates/groundwork-core" }
+groundwork-export = { path = "crates/groundwork-export" }
 
 [profile.release]
 lto = "thin"

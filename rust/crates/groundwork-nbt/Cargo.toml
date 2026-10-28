@@ -1,6 +1,6 @@
 [package]
-name = "wp-nbt"
-description = "Minecraft NBT reading and writing (port of WorldPainter's JNBT usage)"
+name = "groundwork-nbt"
+description = "Minecraft NBT reading and writing (replaces the JNBT library used by WorldPainter)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

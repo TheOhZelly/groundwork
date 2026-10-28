@@ -65,6 +65,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "groundwork-anvil"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "groundwork-nbt",
+]
+
+[[package]]
+name = "groundwork-core"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "flate2",
+ "png",
+ "serde",
+]
+
+[[package]]
+name = "groundwork-export"
+version = "0.1.0"
+dependencies = [
+ "groundwork-anvil",
+ "groundwork-core",
+ "groundwork-nbt",
+]
+
+[[package]]
+name = "groundwork-mcp"
+version = "0.1.0"
+dependencies = [
+ "groundwork-core",
+ "groundwork-export",
+ "serde_json",
+]
+
+[[package]]
+name = "groundwork-nbt"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "indexmap",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,50 +252,6 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
-
-[[package]]
-name = "wp-anvil"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "wp-nbt",
-]
-
-[[package]]
-name = "wp-core"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "flate2",
- "png",
- "serde",
-]
-
-[[package]]
-name = "wp-export"
-version = "0.1.0"
-dependencies = [
- "wp-anvil",
- "wp-core",
- "wp-nbt",
-]
-
-[[package]]
-name = "wp-mcp"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wp-core",
- "wp-export",
-]
-
-[[package]]
-name = "wp-nbt"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "indexmap",
-]
 
 [[package]]
 name = "zlib-rs"

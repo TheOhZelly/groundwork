@@ -2,10 +2,10 @@
 //! settings the Rust model has so far.
 
 use crate::{Error, Outside, DATA_VERSION, VERSION_NAME};
+use groundwork_core::{GameMode, World};
+use groundwork_nbt::{compound, Compound, List, Tag, TAG_COMPOUND, TAG_STRING};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wp_core::{GameMode, World};
-use wp_nbt::{compound, Compound, List, Tag, TAG_COMPOUND, TAG_STRING};
 
 /// NBT format version of Anvil level.dat files.
 const ANVIL_VERSION: i32 = 19133;
@@ -73,7 +73,7 @@ pub fn write_level_dat(
         "thunderTime" => 0i32,
         "clearWeatherTime" => 0i32,
         "WasModded" => false,
-        "ServerBrands" => List::strings(["WorldPainter (Rust)"]),
+        "ServerBrands" => List::strings(["Groundwork"]),
         "DataPacks" => compound! {
             "Enabled" => List::strings(["vanilla"]),
             "Disabled" => List::empty(TAG_STRING),
@@ -101,7 +101,12 @@ pub fn write_level_dat(
         "ScheduledEvents" => List::empty(TAG_COMPOUND),
     };
     let root = compound! { "Data" => Tag::Compound(data) };
-    wp_nbt::write_file(dir.join("level.dat"), "", &root, wp_nbt::Compression::Gzip)?;
+    groundwork_nbt::write_file(
+        dir.join("level.dat"),
+        "",
+        &root,
+        groundwork_nbt::Compression::Gzip,
+    )?;
     Ok(())
 }
 

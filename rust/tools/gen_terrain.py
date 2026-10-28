@@ -1,4 +1,4 @@
-"""Generate wp-core/src/terrain_table.rs from WorldPainter's Terrain.java.
+"""Generate groundwork-core/src/terrain_table.rs from WorldPainter's Terrain.java.
 
 Usage: python -I gen_terrain.py <Terrain.java> <out.rs>
 """

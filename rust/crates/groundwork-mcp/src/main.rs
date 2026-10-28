@@ -1,4 +1,4 @@
-//! WorldPainter MCP server.
+//! Groundwork MCP server.
 //!
 //! Speaks the Model Context Protocol over stdio: newline-delimited JSON-RPC
 //! 2.0 on stdin/stdout, logging on stderr. Holds one open world in memory.
@@ -13,7 +13,7 @@ use std::io::{self, BufRead, Write};
 const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "\
-WorldPainter edits Minecraft maps as a height map plus painted terrain and layers, then exports a playable \
+Groundwork edits Minecraft maps as a height map plus painted terrain and layers, then exports a playable \
 Minecraft Java Edition 1.21 save. Coordinates: x runs east, y runs south (Minecraft's z axis); heights are \
 Minecraft y levels. A world is made of 128×128-block tiles; only columns inside tiles can be edited. \
 Typical flow: create_world → sculpt (raise_lower, flatten, smooth) → paint_terrain / paint_layer → flood for \
@@ -23,7 +23,7 @@ fn main() {
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     let mut server = tools::Server::default();
-    eprintln!("worldpainter-mcp {} ready", env!("CARGO_PKG_VERSION"));
+    eprintln!("groundwork-mcp {} ready", env!("CARGO_PKG_VERSION"));
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -86,7 +86,7 @@ fn handle(server: &mut tools::Server, message: Value) -> Option<Value> {
             json!({
                 "protocolVersion": version,
                 "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "worldpainter", "title": "WorldPainter", "version": env!("CARGO_PKG_VERSION") },
+                "serverInfo": { "name": "groundwork", "title": "Groundwork", "version": env!("CARGO_PKG_VERSION") },
                 "instructions": INSTRUCTIONS,
             })
         }

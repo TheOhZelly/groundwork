@@ -1,5 +1,5 @@
 [package]
-name = "wp-anvil"
+name = "groundwork-anvil"
 description = "Minecraft Anvil region file (.mca) access (port of org.pepsoft.minecraft.RegionFile)"
 version.workspace = true
 edition.workspace = true
@@ -8,4 +8,4 @@ authors.workspace = true
 
 [dependencies]
 flate2.workspace = true
-wp-nbt.workspace = true
+groundwork-nbt.workspace = true

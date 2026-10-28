@@ -1,4 +1,4 @@
-"""Generate wp-core/src/biomes_table.rs from Minecraft1_21Biomes.java.
+"""Generate groundwork-core/src/biomes_table.rs from Minecraft1_21Biomes.java.
 
 Usage: python -I gen_biomes.py <Minecraft1_21Biomes.java> <out.rs>
 """

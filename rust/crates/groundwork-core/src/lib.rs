@@ -1,4 +1,4 @@
-//! Core of the Rust port of WorldPainter.
+//! Core of Groundwork, a Rust port of WorldPainter.
 //!
 //! The model mirrors the Java version: a [`World`] has [`Dimension`]s, which
 //! are made of 128×128 [`Tile`]s. Each column of a tile stores a height

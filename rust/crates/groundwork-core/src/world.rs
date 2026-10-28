@@ -1,4 +1,4 @@
-//! A WorldPainter world. Port of the data side of `World2`.
+//! A world. Port of the data side of WorldPainter's `World2`.
 
 use crate::dimension::{Dimension, DimensionKind};
 use serde::{Deserialize, Serialize};

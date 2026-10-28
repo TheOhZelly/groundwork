@@ -31,7 +31,7 @@ const EXTERNAL_FLAG: u8 = 0x80;
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
-    Nbt(wp_nbt::Error),
+    Nbt(groundwork_nbt::Error),
     InvalidRegion(String),
     OutOfBounds { x: i32, z: i32 },
     ChunkTooLarge(usize),
@@ -61,8 +61,8 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<wp_nbt::Error> for Error {
-    fn from(e: wp_nbt::Error) -> Self {
+impl From<groundwork_nbt::Error> for Error {
+    fn from(e: groundwork_nbt::Error) -> Self {
         Error::Nbt(e)
     }
 }
@@ -249,9 +249,9 @@ impl RegionFile {
     }
 
     /// Reads a chunk and parses it as an NBT root compound.
-    pub fn read_chunk(&mut self, x: i32, z: i32) -> Result<Option<wp_nbt::Compound>> {
+    pub fn read_chunk(&mut self, x: i32, z: i32) -> Result<Option<groundwork_nbt::Compound>> {
         match self.read_chunk_bytes(x, z)? {
-            Some(bytes) => Ok(Some(wp_nbt::from_bytes(&bytes)?.1)),
+            Some(bytes) => Ok(Some(groundwork_nbt::from_bytes(&bytes)?.1)),
             None => Ok(None),
         }
     }
@@ -264,8 +264,8 @@ impl RegionFile {
         self.write_compressed(x, z, &data)
     }
 
-    pub fn write_chunk(&mut self, x: i32, z: i32, root: &wp_nbt::Compound) -> Result<()> {
-        let bytes = wp_nbt::to_bytes("", root, wp_nbt::Compression::None)?;
+    pub fn write_chunk(&mut self, x: i32, z: i32, root: &groundwork_nbt::Compound) -> Result<()> {
+        let bytes = groundwork_nbt::to_bytes("", root, groundwork_nbt::Compression::None)?;
         self.write_chunk_bytes(x, z, &bytes)
     }
 
@@ -402,10 +402,13 @@ fn parse_region_name(path: &Path) -> Result<(i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wp_nbt::compound;
+    use groundwork_nbt::compound;
 
     fn temp_region(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("wp-anvil-test-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "groundwork-anvil-test-{}-{name}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("r.-1.2.mca");
         let _ = std::fs::remove_file(&path);
@@ -439,10 +442,10 @@ mod tests {
         assert!(!region.contains_chunk(3, 4));
         assert_eq!(
             region.read_chunk(0, 0).unwrap().unwrap()["small"],
-            wp_nbt::Tag::Byte(1)
+            groundwork_nbt::Tag::Byte(1)
         );
         let big = region.read_chunk(31, 31).unwrap().unwrap();
-        assert!(matches!(&big["data"], wp_nbt::Tag::LongArray(v) if v.len() == 3000));
+        assert!(matches!(&big["data"], groundwork_nbt::Tag::LongArray(v) if v.len() == 3000));
         assert_eq!(
             std::fs::metadata(&path).unwrap().len() % SECTOR_BYTES as u64,
             0

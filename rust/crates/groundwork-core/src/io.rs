@@ -1,10 +1,10 @@
 //! Saving and loading worlds.
 //!
-//! The Java version stores `.world` files as gzipped Java object
-//! serialization, which cannot reasonably be read outside the JVM. The Rust
-//! port uses its own format: a magic header, a format version, then a
-//! gzipped bincode encoding of [`World`]. The conventional extension is
-//! `.wprs`. Importing Java `.world` files is a separate, planned piece of work.
+//! WorldPainter stores `.world` files as gzipped Java object serialization,
+//! which cannot reasonably be read outside the JVM. Groundwork uses its own
+//! format: a magic header, a format version, then a gzipped bincode encoding
+//! of [`World`]. The conventional extension is `.gwork`. Importing
+//! WorldPainter `.world` files is a separate, planned piece of work.
 
 use crate::world::World;
 use flate2::read::GzDecoder;
@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
-const MAGIC: &[u8; 4] = b"WPRS";
+const MAGIC: &[u8; 4] = b"GWRK";
 const FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug)]
@@ -31,11 +31,14 @@ impl std::fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "I/O error: {e}"),
             Error::Encoding(e) => write!(f, "corrupt world file: {e}"),
-            Error::NotAWorld => write!(f, "not a WorldPainter (Rust) world file"),
-            Error::UnsupportedVersion(v) => write!(f, "world file format version {v} is newer than this build supports"),
+            Error::NotAWorld => write!(f, "not a Groundwork world file"),
+            Error::UnsupportedVersion(v) => write!(
+                f,
+                "world file format version {v} is newer than this build supports"
+            ),
             Error::JavaWorld => write!(
                 f,
-                "this is a Java WorldPainter .world file; importing those is not supported by the Rust port yet"
+                "this is a WorldPainter .world file; importing those is not supported yet"
             ),
         }
     }
@@ -58,7 +61,7 @@ impl From<bincode::Error> for Error {
 /// Saves atomically: writes a temporary file next to `path`, then renames it.
 pub fn save(world: &World, path: impl AsRef<Path>) -> Result<(), Error> {
     let path = path.as_ref();
-    let tmp = path.with_extension("wprs.tmp");
+    let tmp = path.with_extension("gwork.tmp");
     {
         let mut out = BufWriter::new(File::create(&tmp)?);
         out.write_all(MAGIC)?;
@@ -110,7 +113,8 @@ mod tests {
         dim.set_layer_value_at(layers::FROST, 5, 5, 1);
         let mut world = World::new("Test", 3, dim);
         world.spawn = (10, -4);
-        let path = std::env::temp_dir().join(format!("wp-core-io-{}.wprs", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("groundwork-core-io-{}.gwork", std::process::id()));
         save(&world, &path).unwrap();
         let back = load(&path).unwrap();
         std::fs::remove_file(&path).ok();
@@ -123,7 +127,8 @@ mod tests {
 
     #[test]
     fn recognises_java_worlds() {
-        let path = std::env::temp_dir().join(format!("wp-core-java-{}.world", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("groundwork-core-java-{}.world", std::process::id()));
         std::fs::write(&path, [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0]).unwrap();
         assert!(matches!(load(&path), Err(Error::JavaWorld)));
         std::fs::remove_file(&path).ok();

@@ -1,0 +1,16 @@
+[package]
+name = "groundwork-mcp"
+description = "Model Context Protocol server exposing Groundwork world editing and Minecraft export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "groundwork-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+groundwork-core.workspace = true
+groundwork-export.workspace = true

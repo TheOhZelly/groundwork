@@ -1,7 +1,7 @@
 //! Typed access to tool-call arguments.
 
+use groundwork_core::ops::{Falloff, Shape};
 use serde_json::Value;
-use wp_core::ops::{Falloff, Shape};
 
 pub struct Args<'a>(pub &'a Value);
 

@@ -1,6 +1,6 @@
 [package]
-name = "wp-core"
-description = "WorldPainter world model: tiles, dimensions, terrain, layers, editing operations"
+name = "groundwork-core"
+description = "Groundwork world model: tiles, dimensions, terrain, layers, editing operations"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -9,10 +9,10 @@
 mod chunk;
 mod level;
 
+use groundwork_core::{Dimension, DimensionKind, World, TILE_SIZE};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use wp_core::{Dimension, DimensionKind, World, TILE_SIZE};
 
 /// Minecraft 1.21.1. Minecraft upgrades worlds from older data versions on
 /// load, so this also opens in later releases.
@@ -54,8 +54,8 @@ pub struct ExportReport {
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    Nbt(wp_nbt::Error),
-    Region(wp_anvil::Error),
+    Nbt(groundwork_nbt::Error),
+    Region(groundwork_anvil::Error),
     Refused(String),
 }
 
@@ -77,13 +77,13 @@ impl From<std::io::Error> for Error {
         Error::Io(e)
     }
 }
-impl From<wp_nbt::Error> for Error {
-    fn from(e: wp_nbt::Error) -> Self {
+impl From<groundwork_nbt::Error> for Error {
+    fn from(e: groundwork_nbt::Error) -> Self {
         Error::Nbt(e)
     }
 }
-impl From<wp_anvil::Error> for Error {
-    fn from(e: wp_anvil::Error) -> Self {
+impl From<groundwork_anvil::Error> for Error {
+    fn from(e: groundwork_anvil::Error) -> Self {
         Error::Region(e)
     }
 }
@@ -203,8 +203,8 @@ fn export_region(
     max_y: i32,
     warnings: &Mutex<Vec<String>>,
 ) -> Result<usize, Error> {
-    let path = region_dir.join(wp_anvil::region_file_name(rx, rz));
-    let mut region = wp_anvil::RegionFile::open(&path)?;
+    let path = region_dir.join(groundwork_anvil::region_file_name(rx, rz));
+    let mut region = groundwork_anvil::RegionFile::open(&path)?;
     let mut count = 0;
     let chunks_per_tile = TILE_SIZE / 16;
     for ty in rz * 4..rz * 4 + 4 {
