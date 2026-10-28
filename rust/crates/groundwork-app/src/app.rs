@@ -246,6 +246,84 @@ impl App {
         }
     }
 
+    fn import_height_map(&mut self, form: &dialogs::HeightMapForm) {
+        use groundwork_core::heightmap::{import, HeightImage, ImportOptions};
+        let path = PathBuf::from(form.path.trim());
+        let image = match HeightImage::load(&path) {
+            Ok(image) => image,
+            Err(e) => return self.toast(ToastKind::Error, e),
+        };
+        let (w, h) = (
+            image.width as f32 * form.scale,
+            image.height as f32 * form.scale,
+        );
+        let tiles = ((w / 128.0).ceil() + 1.0) * ((h / 128.0).ceil() + 1.0);
+        if tiles > 6400.0 {
+            return self.toast(
+                ToastKind::Error,
+                format!("That would be {w:.0}×{h:.0} blocks; keep it within 10,240×10,240 (lower the scale)"),
+            );
+        }
+        if form.new_world || self.doc.is_none() {
+            let name = path
+                .file_stem()
+                .map_or("Imported".into(), |s| s.to_string_lossy().into_owned());
+            let world = World::new(
+                name,
+                0,
+                groundwork_core::Dimension::new(OVERWORLD, -64, 320, 0),
+            );
+            self.set_document(Document::new(world, None, true));
+        }
+        let doc = self.doc.as_mut().unwrap();
+        doc.snapshot();
+        let options = ImportOptions {
+            x: -(w / 2.0) as i32,
+            y: -(h / 2.0) as i32,
+            scale: form.scale,
+            low: form.low,
+            high: form.high,
+            terrain: form.terrain,
+            water_level: form.water_level,
+        };
+        let changed = import(
+            doc.world.dimension_mut(OVERWORLD).unwrap(),
+            &image,
+            &options,
+        );
+        doc.dirty = true;
+        self.view.fit_pending = true;
+        self.dialog = None;
+        self.toast(
+            ToastKind::Success,
+            format!("Imported {changed} columns ({w:.0}×{h:.0} blocks)"),
+        );
+    }
+
+    fn export_height_map(&mut self) {
+        let Some(doc) = self.doc.as_ref() else { return };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("PNG image", &["png"])
+            .set_file_name(format!("{} heights.png", doc.world.name))
+            .save_file()
+        else {
+            return;
+        };
+        let result =
+            groundwork_core::heightmap::export_png(doc.world.dimension(OVERWORLD).unwrap())
+                .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
+        match result {
+            Ok(()) => self.toast(
+                ToastKind::Success,
+                format!("Saved height map to {}", path.display()),
+            ),
+            Err(e) => self.toast(
+                ToastKind::Error,
+                format!("Couldn't export the height map: {e}"),
+            ),
+        }
+    }
+
     fn start_export(&mut self, form: &ExportForm) {
         let Some(doc) = self.doc.as_ref() else { return };
         let world = doc.world.clone();
@@ -637,6 +715,7 @@ impl App {
                             _ => {}
                         }
 
+                        let (mut import_heights, mut export_heights) = (false, false);
                         if let Some(doc) = self.doc.as_mut() {
                             ui.add_space(6.0);
                             theme::card(ui, "World", |ui| {
@@ -717,7 +796,17 @@ impl App {
                                 if changed {
                                     doc.dirty = true;
                                 }
+                                ui.horizontal(|ui| {
+                                    import_heights = ui.button("⛰ Import height map…").clicked();
+                                    export_heights = ui.button("Export…").on_hover_text("Save heights as a 16-bit PNG").clicked();
+                                });
                             });
+                        }
+                        if import_heights {
+                            self.dialog = Some(Dialog::ImportHeightMap(dialogs::HeightMapForm::new(true)));
+                        }
+                        if export_heights {
+                            self.export_height_map();
                         }
                     });
             });
@@ -1005,6 +1094,10 @@ impl App {
                         if ui.button("📂  Open a .gwork file").clicked() {
                             self.open();
                         }
+                        if ui.button("⛰  Start from a height map").clicked() {
+                            self.dialog =
+                                Some(Dialog::ImportHeightMap(dialogs::HeightMapForm::new(false)));
+                        }
                         ui.add_space(14.0);
                         ui.label(
                             RichText::new("An unofficial Rust port of WorldPainter")
@@ -1029,6 +1122,21 @@ impl App {
                 Outcome::Accept(()) => {
                     let form = form.clone();
                     self.create_world(&form);
+                }
+            },
+            Dialog::ImportHeightMap(form) => match form.show(ctx) {
+                Outcome::Open => {}
+                Outcome::Cancel => self.dialog = None,
+                Outcome::Accept(()) => {
+                    let form = form.clone();
+                    if form.new_world && self.dirty() {
+                        self.toast(
+                            ToastKind::Error,
+                            "Save or close the open world before starting a new one",
+                        );
+                    } else {
+                        self.import_height_map(&form);
+                    }
                 }
             },
             Dialog::Export(form) => match form.show(ctx) {

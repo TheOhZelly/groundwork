@@ -13,7 +13,8 @@ use std::path::PathBuf;
 /// Undo snapshots share unchanged tiles, so each costs only what its edit
 /// touched.
 const MAX_UNDO: usize = 50;
-const MAX_TILES: u64 = 1024;
+/// 80×80 tiles: a 10,240-block square world.
+const MAX_TILES: u64 = 6400;
 const NO_WORLD: &str = "no world is open; use create_world or open_world first";
 
 #[derive(Default)]
@@ -147,6 +148,30 @@ impl Server {
             "set_world_settings" => self.set_world_settings(a),
             "render_preview" => self.render_preview(a),
             "export_minecraft" => self.export(a),
+            "import_height_map" => self.import_height_map(a),
+            "export_height_map" => {
+                let path = PathBuf::from(a.req_str("path")?);
+                let dim = self
+                    .world
+                    .as_ref()
+                    .ok_or(NO_WORLD)?
+                    .dimension(DimensionKind::Overworld)
+                    .unwrap();
+                let png = groundwork_core::heightmap::export_png(dim)?;
+                std::fs::write(&path, png)
+                    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+                let e = dim.extent().unwrap();
+                Ok(Output::Text(format!(
+                    "wrote a {}×{} 16-bit height map to {}; black is y={}, white y={}; its top-left pixel is x={}, y={}",
+                    e.width(),
+                    e.height(),
+                    path.display(),
+                    dim.min_height,
+                    dim.max_height - 1,
+                    e.x0,
+                    e.y0
+                )))
+            }
             "undo" => {
                 let previous = self.undo.pop().ok_or("nothing to undo")?;
                 self.world = Some(previous);
@@ -221,7 +246,7 @@ impl Server {
         };
         let tiles = opts.width_tiles as u64 * opts.length_tiles as u64;
         if tiles > MAX_TILES {
-            return Err(format!("{tiles} tiles requested; the limit is {MAX_TILES} (e.g. 32×32 tiles = 4096×4096 blocks)"));
+            return Err(format!("{tiles} tiles requested; the limit is {MAX_TILES} (e.g. 80×80 tiles = 10240×10240 blocks)"));
         }
         let dim = generate(&opts)?;
         let extent = dim.extent().unwrap();
@@ -479,6 +504,75 @@ impl Server {
         })
     }
 
+    fn import_height_map(&mut self, a: &Args) -> Result<Output, String> {
+        use groundwork_core::heightmap::{import, HeightImage, ImportOptions};
+        let path = PathBuf::from(a.req_str("path")?);
+        let image = HeightImage::load(&path)?;
+        let scale = a.f32("scale")?.unwrap_or(1.0);
+        if !(0.01..=64.0).contains(&scale) {
+            return Err("scale must be between 0.01 and 64 blocks per pixel".into());
+        }
+        let (w, h) = (image.width as f32 * scale, image.height as f32 * scale);
+        let tiles = ((w / 128.0).ceil() + 1.0) as u64 * ((h / 128.0).ceil() + 1.0) as u64;
+        if tiles > MAX_TILES {
+            return Err(format!("a {w}×{h} block import needs about {tiles} tiles; the limit is {MAX_TILES}; use a smaller scale"));
+        }
+        let terrain = match a.str("terrain")? {
+            Some(t) => find_terrain(t)?,
+            None => Terrain::Grass,
+        };
+        let new_world = a.bool("new_world")?.unwrap_or(self.world.is_none());
+        if new_world {
+            self.check_unsaved(a)?;
+            let name = a.str("name")?.map(str::to_owned).unwrap_or_else(|| {
+                path.file_stem()
+                    .map_or("Imported".into(), |s| s.to_string_lossy().into_owned())
+            });
+            let seed = a.u64("seed")?.unwrap_or(0);
+            self.world = Some(World::new(
+                name,
+                seed,
+                Dimension::new(DimensionKind::Overworld, -64, 320, seed),
+            ));
+            self.path = None;
+            self.undo.clear();
+        }
+        let dim_range = {
+            let d = self
+                .world
+                .as_ref()
+                .unwrap()
+                .dimension(DimensionKind::Overworld)
+                .unwrap();
+            (d.min_height, d.max_height)
+        };
+        let options = ImportOptions {
+            // Centred on the origin unless placed explicitly.
+            x: a.i32("x")?.unwrap_or(-(w / 2.0) as i32),
+            y: a.i32("y")?.unwrap_or(-(h / 2.0) as i32),
+            scale,
+            low: a.f32("low")?.unwrap_or(dim_range.0 as f32),
+            high: a.f32("high")?.unwrap_or((dim_range.1 - 1) as f32),
+            terrain,
+            water_level: a.i32("water_level")?.unwrap_or(62),
+        };
+        let message = format!(
+            "imported {}×{} pixels as {}×{} blocks at x={}, y={}, heights {}..{}",
+            image.width,
+            image.height,
+            w as i32,
+            h as i32,
+            options.x,
+            options.y,
+            options.low,
+            options.high
+        );
+        self.edit(|d| {
+            let n = import(d, &image, &options);
+            Ok(format!("{message} ({n} columns)"))
+        })
+    }
+
     fn export(&self, a: &Args) -> Result<Output, String> {
         let world = self.world.as_ref().ok_or(NO_WORLD)?;
         let path = PathBuf::from(a.req_str("path")?);
@@ -706,6 +800,27 @@ pub fn definitions() -> Vec<Value> {
                 "threads": { "type": "integer", "minimum": 1, "description": "Worker threads (default: all cores)" },
             }),
             &["path"], false),
+        tool("import_height_map", "Import height map",
+            "Set terrain heights from a greyscale PNG (8 or 16 bit; colour images use brightness). Black maps to low, white to high. Creates a new world from it when none is open (or new_world is true); otherwise it is applied to the open world, adding tiles where needed.",
+            none(),
+            json!({
+                "path": { "type": "string" },
+                "low": { "type": "number", "description": "Height for black (default: bottom of the world, -64)" },
+                "high": { "type": "number", "description": "Height for white (default: top of the world, 319). For an 8-bit map of 0-255 levels, use low 0 and high 255" },
+                "scale": { "type": "number", "description": "Blocks per pixel (default 1); above 1 upscales smoothly" },
+                "x": { "type": "integer", "description": "World x of the top-left pixel (default: image centred on 0,0)" },
+                "y": { "type": "integer", "description": "World y of the top-left pixel" },
+                "water_level": { "type": "integer", "description": "Sea level for new tiles (default 62)" },
+                "terrain": { "type": "string", "description": "Terrain for new tiles (default GRASS)" },
+                "new_world": { "type": "boolean", "description": "Start a new world from the image" },
+                "name": { "type": "string", "description": "Name for a new world (default: file name)" },
+                "seed": { "type": ["integer", "string"] },
+                "discard_unsaved": { "type": "boolean" },
+            }),
+            &["path"], false),
+        tool("export_height_map", "Export height map",
+            "Save the world's heights as a 16-bit greyscale PNG (black = bottom of the world, white = top). Import it back with the default low/high.",
+            none(), json!({ "path": { "type": "string" } }), &["path"], true),
         tool("undo", "Undo", "Revert the last edit (up to 50 steps).", none(), json!({}), &[], false),
     ]
 }
@@ -826,5 +941,52 @@ mod tests {
         let before = s.undo.len();
         err(&mut s, "flood", json!({ "x": 9999, "y": 0, "level": 80 }));
         assert_eq!(s.undo.len(), before);
+    }
+
+    #[test]
+    fn height_map_round_trip() {
+        let mut s = Server::default();
+        ok(
+            &mut s,
+            "create_world",
+            json!({ "name": "Hills", "width_tiles": 2, "length_tiles": 2, "seed": 3 }),
+        );
+        let before: Value = serde_json::from_str(
+            ok(&mut s, "get_column", json!({ "x": 40, "y": -30 }))["content"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let file = std::env::temp_dir().join(format!("wp-mcp-heights-{}.png", std::process::id()));
+        ok(&mut s, "export_height_map", json!({ "path": file }));
+        // Into a new world, placed where the original was.
+        ok(
+            &mut s,
+            "import_height_map",
+            json!({ "path": file, "new_world": true, "discard_unsaved": true, "x": -128, "y": -128 }),
+        );
+        let after: Value = serde_json::from_str(
+            ok(&mut s, "get_column", json!({ "x": 40, "y": -30 }))["content"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(&file).ok();
+        let (a, b) = (
+            before["height"].as_f64().unwrap(),
+            after["height"].as_f64().unwrap(),
+        );
+        assert!((a - b).abs() < 0.01, "{a} vs {b}");
+        let info = ok(&mut s, "world_info", json!({}));
+        assert!(info["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("\"tiles\": 4"));
+        assert!(err(
+            &mut s,
+            "import_height_map",
+            json!({ "path": "no-such-file.png" })
+        )
+        .contains("cannot read"));
     }
 }

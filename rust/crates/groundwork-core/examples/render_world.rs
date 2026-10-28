@@ -16,8 +16,13 @@ fn main() {
     };
     let max_side = args.get(4).map_or(1024, |s| s.parse().expect("MAX_SIDE"));
     let world = groundwork_core::io::load(&args[1]).expect("load world");
-    let dim = world.dimension(DimensionKind::Overworld).expect("overworld");
+    let dim = world
+        .dimension(DimensionKind::Overworld)
+        .expect("overworld");
     let (image, scale) = render_view(dim, 1, max_side, view).expect("world has tiles");
     std::fs::write(&args[2], image.to_png().expect("encode PNG")).expect("write PNG");
-    println!("{}×{} at {scale} blocks per pixel", image.width, image.height);
+    println!(
+        "{}×{} at {scale} blocks per pixel",
+        image.width, image.height
+    );
 }

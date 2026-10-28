@@ -11,6 +11,7 @@ use std::path::PathBuf;
 pub enum Dialog {
     NewWorld(NewWorldForm),
     Export(ExportForm),
+    ImportHeightMap(HeightMapForm),
     Confirm(PendingAction),
 }
 
@@ -278,6 +279,135 @@ impl NewWorldForm {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 if theme::primary_button(ui, "Create world").clicked() {
+                    outcome = Outcome::Accept(());
+                }
+                if ui.button("Cancel").clicked() {
+                    outcome = Outcome::Cancel;
+                }
+            });
+        });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            outcome = Outcome::Cancel;
+        }
+        outcome
+    }
+}
+
+// ------------------------------------------------------------ height map --
+
+#[derive(Clone)]
+pub struct HeightMapForm {
+    pub path: String,
+    pub low: f32,
+    pub high: f32,
+    pub scale: f32,
+    pub water_level: i32,
+    pub terrain: Terrain,
+    pub terrain_filter: String,
+    /// Start a new world rather than adding to the open one.
+    pub new_world: bool,
+    /// Whether a world is open (otherwise the import always starts one).
+    pub world_open: bool,
+}
+
+impl HeightMapForm {
+    pub fn new(world_open: bool) -> Self {
+        HeightMapForm {
+            path: String::new(),
+            low: -64.0,
+            high: 319.0,
+            scale: 1.0,
+            water_level: 62,
+            terrain: Terrain::Grass,
+            terrain_filter: String::new(),
+            new_world: !world_open,
+            world_open,
+        }
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context) -> Outcome<()> {
+        let mut outcome = Outcome::Open;
+        modal(ctx, "Import height map", 460.0, |ui| {
+            ui.label(
+                RichText::new("A greyscale PNG (8 or 16 bit): black becomes the low height, white the high one.")
+                    .color(theme::MUTED),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.path)
+                        .hint_text("height map .png")
+                        .desired_width(ui.available_width() - 90.0),
+                );
+                if ui.button("Browse…").clicked() {
+                    if let Some(file) = rfd::FileDialog::new()
+                        .add_filter("PNG image", &["png"])
+                        .pick_file()
+                    {
+                        self.path = file.display().to_string();
+                    }
+                }
+            });
+            egui::Grid::new("height_map_grid")
+                .num_columns(2)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label("Black");
+                    ui.add(
+                        egui::Slider::new(&mut self.low, -64.0..=319.0)
+                            .step_by(1.0)
+                            .prefix("y = "),
+                    );
+                    ui.end_row();
+                    ui.label("White");
+                    ui.add(
+                        egui::Slider::new(&mut self.high, -64.0..=319.0)
+                            .step_by(1.0)
+                            .prefix("y = "),
+                    );
+                    ui.end_row();
+                    ui.label("Scale");
+                    ui.add(
+                        egui::DragValue::new(&mut self.scale)
+                            .range(0.25..=16.0)
+                            .speed(0.05)
+                            .suffix(" blocks per pixel"),
+                    );
+                    ui.end_row();
+                    ui.label("Sea level");
+                    ui.add(egui::Slider::new(&mut self.water_level, -64..=319));
+                    ui.end_row();
+                });
+            ui.horizontal(|ui| {
+                if ui.small_button("Full height (−64…319)").clicked() {
+                    (self.low, self.high) = (-64.0, 319.0);
+                }
+                if ui.small_button("8-bit levels (0…255)").clicked() {
+                    (self.low, self.high) = (0.0, 255.0);
+                }
+            });
+            if self.world_open {
+                ui.checkbox(
+                    &mut self.new_world,
+                    "Start a new world (otherwise added to this one)",
+                );
+            }
+            ui.label(RichText::new("Ground for new areas").color(theme::MUTED));
+            terrain_picker(
+                ui,
+                "height_map_terrain",
+                &mut self.terrain,
+                &mut self.terrain_filter,
+                120.0,
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let ready = !self.path.trim().is_empty();
+                if ui
+                    .add_enabled_ui(ready, |ui| theme::primary_button(ui, "Import"))
+                    .inner
+                    .clicked()
+                {
                     outcome = Outcome::Accept(());
                 }
                 if ui.button("Cancel").clicked() {

@@ -25,10 +25,11 @@ cargo run --release -p groundwork-app
 
 That builds and opens the editor; the program is `target/release/groundwork(.exe)`.
 
-- **Navigate:** scroll to zoom, middle-drag or Space+drag to pan, arrow keys to move, F to fit the world.
+- **Navigate:** scroll to zoom, middle-drag or Space+drag to pan, arrow keys to move, F to fit the world, B to switch between terrain and biome view.
 - **Tools:** 1 Raise, 2 Lower, 3 Flatten, 4 Smooth, 5 Paint terrain, 6 Paint layer, 7 Flood, 8 Spawn.
 - **Brushes:** left-drag applies the tool; right-drag does the opposite (lower, erase, drain), and with Paint terrain it picks the terrain under the cursor. `[` and `]` change the brush size.
 - **Files:** Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E export, Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo.
+- **Height maps:** import a greyscale PNG as a new world or into the open one, or export the heights, from the World panel (or "Start from a height map" on the welcome screen).
 
 ## Building a world from map images
 
@@ -74,7 +75,11 @@ Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`
   - Water levels.
   - Terrain stored as WorldPainter's enum ordinals: all 162 `Terrain` constants, generated from `Terrain.java` by `tools/gen_terrain.py`.
   - Bit, nibble and byte layers.
-- **Layers:** Frost, Void, FloodWithLava, Biome, and the Deciduous and Pine forest layers. The biome ids are generated from `Minecraft1_21Biomes.java` by `tools/gen_biomes.py`.
+  - Compact storage: tiles are shared copy-on-write (cheap undo), tile-wide constant data is stored once, and heights use 16-bit offsets where possible.
+- **Mixed terrains:** Grass, Rock, Snow on Rock, Stone Mix, Beaches, Bare Beaches, Netherlike, Mesa, Desert, Red Desert and Dirt Path, with their plants (flowers, grass, ferns, seagrass, kelp, cacti, dead bushes). Per-column choices use a bit-exact `java.util.Random`, so they land where WorldPainter puts them.
+- **Layers:** Frost, Void, FloodWithLava, Biome, Deciduous and Pine forests, Resources (ores) and Caverns. The biome ids are generated from `Minecraft1_21Biomes.java` by `tools/gen_biomes.py`.
+- **Biomes:** WorldPainter's automatic biomes (water depth, frost, forests, each terrain's default biome) and a biome view in the editor and previews.
+- **Height maps:** import 8- or 16-bit greyscale PNGs; export 16-bit PNGs that import back losslessly.
 - **New worlds:** a noise height map plus one terrain, with `SimpleTheme`'s beach rule.
 - **Operations:**
   - Raise/lower, flatten, smooth, paint terrain and paint layer, with circle, square or rectangle brushes and four falloff curves.
@@ -93,31 +98,28 @@ Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`
 ## Known differences from WorldPainter
 
 - **Save files:** worlds save as `.gwork` (gzipped bincode). WorldPainter `.world` files use Java object serialization; they are recognised but can't be opened yet.
-- **Mixed terrains:**
-  - Terrains that WorldPainter mixes with noise (Grass with flowers, Rock, Desert, Mesa, Beaches, Resources, Stone Mix, and others) export as one representative block. The exporter reports this as a warning.
-  - Custom 1–96 terrains export as stone.
-- **Heights:** height storage is always 32-bit. WorldPainter's 16-bit "not tall" representation is not used.
-- **Noise:** generated noise is deterministic but not bit-identical to WorldPainter's `PerlinNoise`, so the same seed gives a different landscape.
-- **Undo:** keeps whole-world snapshots (10 steps). WorldPainter uses per-buffer copy-on-write.
+- **Custom terrains:** Custom 1–96 terrains export as stone.
+- **Noise:** deterministic but not bit-identical to WorldPainter's `PerlinNoise`, so the same seed gives a different landscape. Thresholds are derived from Groundwork's noise distribution, so materials keep WorldPainter's rarities.
+- **Ores:** WorldPainter's table, amounts and height ranges, placed as seeded pockets instead of per-block noise per material. The amounts match; the export is about a thousand times cheaper.
+- **Automatic biomes:** there are no River, Swamp or Jungle layers yet, so those parts of WorldPainter's rules don't apply.
 
 ## Roadmap
 
 Rough order. Each step should land with tests against WorldPainter's behaviour.
 
-1. **Exact terrain materials:** port `MixedMaterial` and each terrain's `getMaterial` overrides, plus plants on Grass and Desert.
+1. **Custom terrains:** port `MixedMaterial`, so Custom 1–96 work.
 2. **WorldPainter `.world` import:** a reader for the Java serialization stream limited to WorldPainter's classes, so existing projects open.
 3. **Remaining layers:**
    - Trees: Java's exact tree shapes, plus jungle, swamp and mangrove
-   - Caverns, caves, chasms and tunnels
-   - Resources (ores)
-   - Plants
+   - Rivers, chasms and tunnels
+   - The Plants layer
    - Custom objects (bo2, bo3, schematic, nbt)
 4. **More platforms:**
    - MCRegion and Anvil from 1.2 to 1.17
    - 26.1
    - Nether and End creation
    - Ceiling dimensions
-5. **Import:** import an existing Minecraft map, and import or export height map images.
+5. **Import:** import an existing Minecraft map.
 6. **Post-processing:** sand and gravel support, fluid edge fixes and lighting, matching `PostProcessor`.
 7. **Scripting and plugins:** a scripting API and a plugin interface.
 8. **GUI:** grow the `egui` editor towards WorldPainter's: selection, custom brushes, layer palettes, multiple dimensions, settings and the 3D view.

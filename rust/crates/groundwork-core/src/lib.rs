@@ -11,6 +11,7 @@ pub mod biomes;
 mod biomes_table;
 pub mod dimension;
 pub mod generate;
+pub mod heightmap;
 pub mod io;
 pub mod layers;
 pub mod noise;
