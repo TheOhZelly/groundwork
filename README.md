@@ -1,3 +1,5 @@
+> **This is Groundwork**, an unofficial Rust port of WorldPainter with an MCP server, in progress. It lives in [`rust/`](rust/); start with [rust/README.md](rust/README.md). It is not affiliated with or endorsed by WorldPainter. The rest of this file and the Java code below are WorldPainter's, kept unchanged as the reference for the port. For the official project, see [Captain-Chaos/WorldPainter](https://github.com/Captain-Chaos/WorldPainter).
+
 # WorldPainter
 
 WorldPainter is an interactive map generator for Minecraft. It allows you to "paint" landscapes using similar tools as a regular paint program. Sculpt and mould the terrain, paint materials, trees, snow and ice, etc. onto it, and much more.
