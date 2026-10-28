@@ -19,6 +19,7 @@ struct TileTexture {
     handle: TextureHandle,
     /// Blocks per texel: 1 at full detail, up to 16 when zoomed far out.
     step: i32,
+    view: render::View,
     /// Address of the tile data it shows. Tiles are copy-on-write, so a
     /// different address means the tile changed (undo, redo, flood, …).
     source: usize,
@@ -33,6 +34,8 @@ pub struct MapView {
     /// Screen pixels per block.
     pub zoom: f32,
     pub fit_pending: bool,
+    /// Terrain or biome colours.
+    pub view: render::View,
     textures: HashMap<(i32, i32), TileTexture>,
     stale: HashSet<(i32, i32)>,
     buf: Vec<u8>,
@@ -45,6 +48,7 @@ impl Default for MapView {
             cam: Vec2::ZERO,
             zoom: 1.0,
             fit_pending: true,
+            view: render::View::Terrain,
             textures: HashMap::new(),
             stale: HashSet::new(),
             buf: Vec::new(),
@@ -153,7 +157,11 @@ impl MapView {
                 }
                 let needs_render = match self.textures.get(&key) {
                     None => true,
-                    Some(texture) => texture.step != step || self.stale.contains(&key),
+                    Some(texture) => {
+                        texture.step != step
+                            || texture.view != self.view
+                            || self.stale.contains(&key)
+                    }
                 };
                 if needs_render {
                     if budget == 0 {
@@ -162,12 +170,13 @@ impl MapView {
                         budget -= 1;
                         let side = (TILE_SIZE / step) as usize;
                         self.buf.resize(side * side * 4, 0);
-                        render::render_tile_lod(dim, tx, ty, step, &mut self.buf);
+                        render::render_tile_view(dim, tx, ty, step, self.view, &mut self.buf);
                         let image = egui::ColorImage::from_rgba_unmultiplied([side; 2], &self.buf);
                         match self.textures.get_mut(&key) {
                             Some(texture) => {
                                 texture.handle.set(image, options);
                                 texture.step = step;
+                                texture.view = self.view;
                                 texture.source = source;
                             }
                             None => {
@@ -178,6 +187,7 @@ impl MapView {
                                     TileTexture {
                                         handle,
                                         step,
+                                        view: self.view,
                                         source,
                                         last_drawn: 0,
                                     },

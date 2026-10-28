@@ -342,6 +342,14 @@ impl App {
             if i.key_pressed(Key::F) {
                 self.view.fit_pending = true;
             }
+            if i.key_pressed(Key::B) {
+                use groundwork_core::render::View;
+                self.view.view = if self.view.view == View::Biomes {
+                    View::Terrain
+                } else {
+                    View::Biomes
+                };
+            }
         });
     }
 
@@ -742,10 +750,15 @@ impl App {
                                 )));
                             }
                             ui.label(muted(format!("🖌 {terrain}")));
-                            if biome != biomes::BIOME_AUTO {
+                            if let Some(id) = groundwork_core::render::column_biome(dim, x, y) {
+                                let auto = if biome == biomes::BIOME_AUTO {
+                                    " (auto)"
+                                } else {
+                                    ""
+                                };
                                 ui.label(muted(format!(
-                                    "🌿 {}",
-                                    biomes::name(biome).unwrap_or("?")
+                                    "🌿 {}{auto}",
+                                    biomes::name(id).unwrap_or("?")
                                 )));
                             }
                         }
@@ -960,6 +973,12 @@ impl App {
                             if ui.button("⛶").on_hover_text("Fit world (F)").clicked() {
                                 self.view.fit_pending = true;
                             }
+                            ui.separator();
+                            use groundwork_core::render::View;
+                            ui.selectable_value(&mut self.view.view, View::Terrain, "🗺 Terrain")
+                                .on_hover_text("Terrain colours (B toggles)");
+                            ui.selectable_value(&mut self.view.view, View::Biomes, "🌿 Biomes")
+                                .on_hover_text("Biome colours: painted and automatic (B toggles)");
                         });
                     });
             });

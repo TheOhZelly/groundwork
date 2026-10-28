@@ -31,6 +31,9 @@ pub struct TerrainInfo {
     /// Block used for the rest of the top layer.
     pub under: Option<&'static str>,
     pub fidelity: Fidelity,
+    /// Biome for automatic biomes (WorldPainter biome id), e.g. desert for
+    /// Desert and beach for Beaches.
+    pub default_biome: u8,
 }
 
 impl Terrain {

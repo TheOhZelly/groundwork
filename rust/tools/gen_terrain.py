@@ -40,23 +40,33 @@ APPROXIMATIONS = {
     "BARE_BEACHES": ("grass_block", "grass_block"),
 }
 
+# Biome ids (WorldPainter's legacy numbering) used as terrain defaults.
+BIOMES = {
+    "BIOME_OCEAN": 0, "BIOME_PLAINS": 1, "BIOME_DESERT": 2, "BIOME_RIVER": 7, "BIOME_HELL": 8,
+    "BIOME_SKY": 9, "BIOME_ICE_PLAINS": 12, "BIOME_MUSHROOM_ISLAND": 14, "BIOME_BEACH": 16,
+    "BIOME_MESA": 37,
+}
+
 pattern = re.compile(r'^    ([A-Z_0-9]+)\("([^"]*)"(.*)$', re.M)
 rows = []
 for m in pattern.finditer(text):
     ident, display, rest = m.group(1), m.group(2), m.group(3)
     args = [a.strip() for a in rest.split(",")]
+    # The default biome is the last BIOME_ constant on the declaration line.
+    biome_names = re.findall(r"\bBIOME_[A-Z_]+\b", rest)
+    biome = BIOMES[biome_names[-1]] if biome_names else 1
     if ident.startswith("CUSTOM_"):
-        rows.append((ident, display, None, None, "Custom"))
+        rows.append((ident, display, None, None, "Custom", biome))
         continue
     if ident in APPROXIMATIONS:
         top, under = APPROXIMATIONS[ident]
-        rows.append((ident, display, top, under, "Mixed"))
+        rows.append((ident, display, top, under, "Mixed", biome))
         continue
     top_c = args[1].replace("Material.", "")
     under_c = args[2].replace("Material.", "")
     if top_c not in BLOCKS or under_c not in BLOCKS:
         sys.exit(f"unmapped material for {ident}: {top_c} / {under_c}")
-    rows.append((ident, display, BLOCKS[top_c], BLOCKS[under_c], "Exact"))
+    rows.append((ident, display, BLOCKS[top_c], BLOCKS[under_c], "Exact", biome))
 
 assert len(rows) == 162, len(rows)
 
@@ -76,8 +86,8 @@ with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(f"    {camel(r[0])},\n")
     f.write("}\n\n")
     f.write(f"pub(super) const TABLE: [TerrainInfo; {len(rows)}] = [\n")
-    for ident, display, top, under, fid in rows:
+    for ident, display, top, under, fid, biome in rows:
         f.write(f'    TerrainInfo {{ terrain: Terrain::{camel(ident)}, id: "{ident}", name: "{display}", '
-                f'top: {opt(top)}, under: {opt(under)}, fidelity: Fidelity::{fid} }},\n')
+                f'top: {opt(top)}, under: {opt(under)}, fidelity: Fidelity::{fid}, default_biome: {biome} }},\n')
     f.write("];\n")
 print(f"wrote {len(rows)} terrains")

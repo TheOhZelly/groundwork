@@ -327,7 +327,8 @@ impl Server {
             "slope": dim.slope_at(x, y),
             "terrain": terrain.info().id,
             "layers": layer_values,
-            "biome": if biome == biomes::BIOME_AUTO { "auto" } else { biomes::modern_id(biome).unwrap_or("unknown") },
+            "biome": render::column_biome(dim, x, y).and_then(biomes::modern_id),
+            "biome_painted": biome != biomes::BIOME_AUTO,
         })))
     }
 
@@ -457,8 +458,13 @@ impl Server {
             .unwrap();
         let scale = a.i32("scale")?.unwrap_or(1).max(1) as u32;
         let max_size = a.i32("max_size")?.unwrap_or(512).clamp(64, 2048) as u32;
+        let view = match a.str("view")?.unwrap_or("terrain") {
+            "terrain" => render::View::Terrain,
+            "biomes" => render::View::Biomes,
+            other => return Err(format!("unknown view {other:?}; use terrain or biomes")),
+        };
         let (image, scale) =
-            render::render(dim, scale, max_size).ok_or("the world has no tiles")?;
+            render::render_view(dim, scale, max_size, view).ok_or("the world has no tiles")?;
         let extent = dim.extent().unwrap();
         let png = image
             .to_png()
@@ -686,6 +692,7 @@ pub fn definitions() -> Vec<Value> {
             json!({
                 "scale": { "type": "integer", "minimum": 1, "description": "Blocks per pixel (raised automatically to fit max_size)" },
                 "max_size": { "type": "integer", "minimum": 64, "maximum": 2048, "description": "Longest image side in pixels (default 512)" },
+                "view": { "type": "string", "enum": ["terrain", "biomes"], "description": "Terrain colours (default) or biome colours" },
             }),
             &[], true),
         tool("export_minecraft", "Export to Minecraft",

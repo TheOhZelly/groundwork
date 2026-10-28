@@ -3,7 +3,7 @@
 use crate::materials::{Materials, Plant};
 use groundwork_core::dimension::split;
 use groundwork_core::noise::hash01;
-use groundwork_core::{biomes, layers, Dimension, DimensionKind, Terrain, Tile};
+use groundwork_core::{biomes, layers, Dimension, Tile};
 use groundwork_nbt::{compound, Compound, List, Tag, TAG_COMPOUND};
 use std::collections::BTreeSet;
 use std::sync::Mutex;
@@ -147,10 +147,16 @@ pub fn build(
                 let value = tile.layer_value(layers::BIOME, tx, ty);
                 column_biomes[(lz / 4) as usize][(lx / 4) as usize] = resolve_biome(
                     value,
-                    dim.kind,
-                    terrain,
-                    water - height,
-                    frost,
+                    biomes::Column {
+                        kind: dim.kind,
+                        terrain,
+                        water_depth: water - height,
+                        lava,
+                        frost,
+                        forest: layers::TREE_LAYERS
+                            .iter()
+                            .any(|l| tile.layer_value(l, tx, ty) > 0),
+                    },
                     &mut problems,
                 );
             }
@@ -324,51 +330,22 @@ fn is_deepslate(seed: u64, x: i32, y: i32, z: i32) -> bool {
     y < 0 || (y < 8 && hash01(seed ^ 0xdee5, x ^ (y << 20), z) < (8 - y) as f32 / 8.0)
 }
 
-/// WorldPainter's Biome layer value → biome id, with a simple automatic
-/// choice for columns left at 255 ("auto").
-fn resolve_biome(
-    value: u8,
-    kind: DimensionKind,
-    terrain: Terrain,
-    water_depth: i32,
-    frost: bool,
-    problems: &mut BTreeSet<String>,
-) -> u8 {
+/// WorldPainter's Biome layer value → biome id; "auto" columns use
+/// WorldPainter's automatic choice.
+fn resolve_biome(value: u8, column: biomes::Column, problems: &mut BTreeSet<String>) -> u8 {
     const PLAINS: u8 = 1;
-    if value != biomes::BIOME_AUTO {
-        if biomes::modern_id(value).is_some() {
-            return value;
-        }
+    let id = if value == biomes::BIOME_AUTO {
+        biomes::auto_biome(column)
+    } else {
+        value
+    };
+    if biomes::modern_id(id).is_none() {
         problems.insert(format!(
-            "biome id {value} has no Minecraft 1.18+ equivalent; exported as plains"
+            "biome id {id} has no Minecraft 1.18+ equivalent; exported as plains"
         ));
         return PLAINS;
     }
-    let name = match kind {
-        DimensionKind::Nether => "nether_wastes",
-        DimensionKind::End => "the_end",
-        DimensionKind::Overworld => match terrain {
-            _ if water_depth > 3 => {
-                if frost {
-                    "frozen_ocean"
-                } else {
-                    "ocean"
-                }
-            }
-            _ if frost => "snowy_plains",
-            Terrain::Beaches | Terrain::BareBeaches => "beach",
-            Terrain::Desert | Terrain::Sand | Terrain::Sandstone => "desert",
-            Terrain::Mesa | Terrain::RedDesert | Terrain::RedSand | Terrain::HardenedClay => {
-                "badlands"
-            }
-            Terrain::Mycelium => "mushroom_fields",
-            Terrain::DeepSnow | Terrain::Snow => "snowy_plains",
-            Terrain::Netherlike | Terrain::Netherrack => "nether_wastes",
-            Terrain::EndStone => "the_end",
-            _ => "plains",
-        },
-    };
-    biomes::find(name).unwrap_or(PLAINS)
+    id
 }
 
 /// `minecraft:x[a=b,c=d]` → `{Name: "minecraft:x", Properties: {a: "b", c: "d"}}`.

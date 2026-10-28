@@ -81,10 +81,25 @@ fn terracotta(block: &str) -> [u8; 3] {
     }
 }
 
+/// What a rendered map shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum View {
+    /// Terrain colours with water, snow and forests (WorldPainter's default).
+    #[default]
+    Terrain,
+    /// Each column's biome, painted or automatic, with hill shading.
+    Biomes,
+}
+
 /// Renders the dimension's tiled area. `scale` is blocks per pixel (≥1);
 /// it is increased automatically so that neither side exceeds `max_side`.
 /// Missing tiles are transparent.
 pub fn render(dim: &Dimension, scale: u32, max_side: u32) -> Option<(Image, u32)> {
+    render_view(dim, scale, max_side, View::Terrain)
+}
+
+/// Like [`render`], showing `view`.
+pub fn render_view(dim: &Dimension, scale: u32, max_side: u32, view: View) -> Option<(Image, u32)> {
     let extent = dim.extent()?;
     let (w, h) = (extent.width() as u32, extent.height() as u32);
     let scale = scale
@@ -97,7 +112,7 @@ pub fn render(dim: &Dimension, scale: u32, max_side: u32) -> Option<(Image, u32)
         for px in 0..iw {
             let x = extent.x0 + (px * scale) as i32;
             let y = extent.y0 + (py * scale) as i32;
-            if let Some(rgb) = column_colour(dim, x, y, scale as i32) {
+            if let Some(rgb) = column_colour(dim, x, y, scale as i32, view) {
                 let i = ((py * iw + px) * 4) as usize;
                 pixels[i..i + 3].copy_from_slice(&rgb);
                 pixels[i + 3] = 255;
@@ -124,6 +139,18 @@ pub fn render_tile(dim: &Dimension, tx: i32, ty: i32, out: &mut [u8]) -> bool {
 /// `out`, which must hold `(128 / step)²` RGBA pixels. Zoomed-out views use
 /// this to avoid rendering and storing detail the screen cannot show.
 pub fn render_tile_lod(dim: &Dimension, tx: i32, ty: i32, step: i32, out: &mut [u8]) -> bool {
+    render_tile_view(dim, tx, ty, step, View::Terrain, out)
+}
+
+/// Like [`render_tile_lod`], showing `view`.
+pub fn render_tile_view(
+    dim: &Dimension,
+    tx: i32,
+    ty: i32,
+    step: i32,
+    view: View,
+    out: &mut [u8],
+) -> bool {
     use crate::tile::TILE_SIZE;
     assert!(
         step > 0 && TILE_SIZE % step == 0,
@@ -138,7 +165,7 @@ pub fn render_tile_lod(dim: &Dimension, tx: i32, ty: i32, step: i32, out: &mut [
         for px in 0..side {
             let i = ((py * side + px) * 4) as usize;
             let (x, y) = (tx * TILE_SIZE + px * step, ty * TILE_SIZE + py * step);
-            let rgb = column_colour(dim, x, y, step).unwrap_or([0, 0, 0]);
+            let rgb = column_colour(dim, x, y, step, view).unwrap_or([0, 0, 0]);
             out[i..i + 3].copy_from_slice(&rgb);
             out[i + 3] = 255;
         }
@@ -146,10 +173,37 @@ pub fn render_tile_lod(dim: &Dimension, tx: i32, ty: i32, step: i32, out: &mut [
     true
 }
 
-fn column_colour(dim: &Dimension, x: i32, y: i32, step: i32) -> Option<[u8; 3]> {
+/// The biome a column exports with: its painted biome, or WorldPainter's
+/// automatic choice.
+pub fn column_biome(dim: &Dimension, x: i32, y: i32) -> Option<u8> {
+    let value = dim.layer_value_at(layers::BIOME, x, y)?;
+    if value != crate::biomes::BIOME_AUTO {
+        return Some(value);
+    }
+    Some(crate::biomes::auto_biome(crate::biomes::Column {
+        kind: dim.kind,
+        terrain: dim.terrain_at(x, y)?,
+        water_depth: dim.water_level_at(x, y)? - dim.int_height_at(x, y)?,
+        lava: dim.layer_value_at(layers::FLOOD_WITH_LAVA, x, y) == Some(1),
+        frost: dim.layer_value_at(layers::FROST, x, y) == Some(1),
+        forest: layers::TREE_LAYERS
+            .iter()
+            .any(|l| dim.layer_value_at(l, x, y).unwrap_or(0) > 0),
+    }))
+}
+
+fn column_colour(dim: &Dimension, x: i32, y: i32, step: i32, view: View) -> Option<[u8; 3]> {
     let height = dim.height_at(x, y)?;
     if dim.layer_value_at(layers::VOID, x, y) == Some(1) {
         return Some([0, 0, 0]);
+    }
+    if view == View::Biomes {
+        let rgb = crate::biomes::colour(column_biome(dim, x, y)?).map(f32::from);
+        let west = dim.height_at(x - step, y).unwrap_or(height);
+        let north = dim.height_at(x, y - step).unwrap_or(height);
+        let shade =
+            (1.0 + ((height - west) + (height - north)) / step as f32 * 0.15).clamp(0.6, 1.4);
+        return Some(rgb.map(|c| (c * shade).clamp(0.0, 255.0) as u8));
     }
     let water = dim.water_level_at(x, y)?;
     let frost = dim.layer_value_at(layers::FROST, x, y) == Some(1);
