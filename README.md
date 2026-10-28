@@ -1,4 +1,4 @@
-> **This is Groundwork**, an unofficial Rust port of WorldPainter with an MCP server, in progress. It lives in [`rust/`](rust/); start with [rust/README.md](rust/README.md). It is not affiliated with or endorsed by WorldPainter. The rest of this file and the Java code below are WorldPainter's, kept unchanged as the reference for the port. For the official project, see [Captain-Chaos/WorldPainter](https://github.com/Captain-Chaos/WorldPainter).
+> **This is Groundwork**, an unofficial Rust port of WorldPainter with an MCP server, in progress. It lives in [`rust/`](rust/); start with [rust/README.md](rust/README.md). It is not affiliated with or endorsed by WorldPainter. The rest of this file and the Java code below are WorldPainter's, kept unchanged as the reference for the port. For the official project, see [Captain-Chaos/WorldPainter](https://github.com/Captain-Chaos/WorldPainter). See [THANKS.md](THANKS.md) for credits.
 
 # WorldPainter
 

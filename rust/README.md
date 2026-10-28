@@ -106,6 +106,10 @@ python -I tools/gen_biomes.py ../WorldPainter/WPCore/src/main/java/org/pepsoft/w
 
 On Windows without Visual Studio Build Tools, use the GNU toolchain (`rustup default stable-x86_64-pc-windows-gnu`).
 
+## Thanks
+
+See [THANKS.md](../THANKS.md) for the people and projects Groundwork builds on.
+
 ## License
 
 GPL-3.0-or-later, the same as WorldPainter, from which this is derived. WorldPainter is © Pepijn Schmitz; see [`../LICENSE`](../LICENSE).
