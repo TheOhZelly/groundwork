@@ -114,6 +114,26 @@ pub fn render(dim: &Dimension, scale: u32, max_side: u32) -> Option<(Image, u32)
     ))
 }
 
+/// Renders one tile at one pixel per block into `out` (RGBA, 128×128).
+/// Returns false, leaving `out` untouched, if there is no such tile.
+pub fn render_tile(dim: &Dimension, tx: i32, ty: i32, out: &mut [u8]) -> bool {
+    use crate::tile::TILE_SIZE;
+    assert_eq!(out.len(), (TILE_SIZE * TILE_SIZE * 4) as usize);
+    if dim.tile(tx, ty).is_none() {
+        return false;
+    }
+    for ly in 0..TILE_SIZE {
+        for lx in 0..TILE_SIZE {
+            let i = ((ly * TILE_SIZE + lx) * 4) as usize;
+            let rgb = column_colour(dim, tx * TILE_SIZE + lx, ty * TILE_SIZE + ly, 1)
+                .unwrap_or([0, 0, 0]);
+            out[i..i + 3].copy_from_slice(&rgb);
+            out[i + 3] = 255;
+        }
+    }
+    true
+}
+
 fn column_colour(dim: &Dimension, x: i32, y: i32, step: i32) -> Option<[u8; 3]> {
     let height = dim.height_at(x, y)?;
     if dim.layer_value_at(layers::VOID, x, y) == Some(1) {

@@ -1,6 +1,6 @@
 # Groundwork
 
-Groundwork is a Minecraft map painter written in Rust, with an MCP server so AI assistants can sculpt, paint and export Minecraft maps.
+Groundwork is a Minecraft map painter written in Rust. It has a desktop editor for painting worlds with the mouse, and an MCP server so AI assistants can sculpt, paint and export Minecraft maps too.
 
 Groundwork is an unofficial port of [WorldPainter](https://www.worldpainter.net/) by Pepijn Schmitz. It is not affiliated with or endorsed by the WorldPainter project. Much of its design, data model and behaviour comes from WorldPainter's Java source, which this repository keeps alongside in [`../WorldPainter`](../WorldPainter). The Java application is still far more complete; use it for real projects.
 
@@ -15,6 +15,20 @@ The port works bottom-up: file formats first, then the world model, then exporti
 | `groundwork-core` | `Tile`, `Dimension`, `World2`, `Terrain`, core operations, `TileRenderer` | Partial, see below |
 | `groundwork-export` | `org.pepsoft.worldpainter.exporting`, `Java118Level` | Partial: Java Edition 1.21 only |
 | `groundwork-mcp` | (new) | MCP server, 21 tools |
+| `groundwork-app` | WPGUI (Swing) | Early: editor with sculpting, painting, flood, spawn, undo/redo, save/open, export |
+
+## Running the editor
+
+```bash
+cargo run --release -p groundwork-app
+```
+
+That builds and opens the editor; the program is `target/release/groundwork(.exe)`.
+
+- **Navigate:** scroll to zoom, middle-drag or Space+drag to pan, arrow keys to move, F to fit the world.
+- **Tools:** 1 Raise, 2 Lower, 3 Flatten, 4 Smooth, 5 Paint terrain, 6 Paint layer, 7 Flood, 8 Spawn.
+- **Brushes:** left-drag applies the tool; right-drag does the opposite (lower, erase, drain), and with Paint terrain it picks the terrain under the cursor. `[` and `]` change the brush size.
+- **Files:** Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E export, Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo.
 
 ## Running the MCP server
 
@@ -88,7 +102,7 @@ Rough order. Each step should land with tests against WorldPainter's behaviour.
 5. **Import:** import an existing Minecraft map, and import or export height map images.
 6. **Post-processing:** sand and gravel support, fluid edge fixes and lighting, matching `PostProcessor`.
 7. **Scripting and plugins:** a scripting API and a plugin interface.
-8. **GUI:** an editor (likely `egui`) covering the main window, tools, brushes, palettes, selection and the 3D view.
+8. **GUI:** grow the `egui` editor towards WorldPainter's: selection, custom brushes, layer palettes, multiple dimensions, settings and the 3D view.
 
 ## Development
 
@@ -104,7 +118,7 @@ python -I tools/gen_terrain.py ../WorldPainter/WPCore/src/main/java/org/pepsoft/
 python -I tools/gen_biomes.py ../WorldPainter/WPCore/src/main/java/org/pepsoft/worldpainter/biomeschemes/Minecraft1_21Biomes.java crates/groundwork-core/src/biomes_table.rs
 ```
 
-On Windows without Visual Studio Build Tools, use the GNU toolchain (`rustup default stable-x86_64-pc-windows-gnu`).
+On Windows, use the MSVC toolchain with Visual Studio Build Tools (C++ workload). The GNU toolchain can't build the editor without a full MinGW-w64 install.
 
 ## Thanks
 
