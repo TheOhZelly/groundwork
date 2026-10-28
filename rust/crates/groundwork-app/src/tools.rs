@@ -118,6 +118,8 @@ pub struct PaintSettings {
     pub biome_filter: String,
     pub water_level: i32,
     pub lava: bool,
+    /// Density for the tree layers, 1–15.
+    pub tree_density: u8,
 }
 
 impl Default for PaintSettings {
@@ -130,6 +132,7 @@ impl Default for PaintSettings {
             biome_filter: String::new(),
             water_level: 62,
             lava: false,
+            tree_density: 10,
         }
     }
 }
@@ -213,6 +216,9 @@ pub fn apply(
                 (true, true) => biomes::BIOME_AUTO,
                 (true, false) => 0,
                 (false, true) => paint.biome,
+                (false, false) if layers::TREE_LAYERS.iter().any(|l| l.id == layer.id) => {
+                    paint.tree_density
+                }
                 (false, false) => layer.size.max_value(),
             };
             (ops::paint_layer(dim, shape, brush.falloff, layer, value) > 0).then_some(())?;

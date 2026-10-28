@@ -66,9 +66,14 @@ pub fn save(world: &World, path: impl AsRef<Path>) -> Result<(), Error> {
         let mut out = BufWriter::new(File::create(&tmp)?);
         out.write_all(MAGIC)?;
         out.write_all(&FORMAT_VERSION.to_be_bytes())?;
-        let mut gz = GzEncoder::new(out, Compression::fast());
+        // bincode writes value by value; buffer in front of the compressor so
+        // it gets large blocks instead of millions of tiny writes.
+        let mut gz = BufWriter::with_capacity(1 << 20, GzEncoder::new(out, Compression::fast()));
         bincode::serialize_into(&mut gz, world)?;
-        gz.finish()?.flush()?;
+        gz.into_inner()
+            .map_err(|e| e.into_error())?
+            .finish()?
+            .flush()?;
     }
     std::fs::rename(&tmp, path)?;
     Ok(())
@@ -92,7 +97,10 @@ pub fn load(path: impl AsRef<Path>) -> Result<World, Error> {
     if version > FORMAT_VERSION {
         return Err(Error::UnsupportedVersion(version));
     }
-    Ok(bincode::deserialize_from(GzDecoder::new(input))?)
+    Ok(bincode::deserialize_from(BufReader::with_capacity(
+        1 << 20,
+        GzDecoder::new(input),
+    ))?)
 }
 
 #[cfg(test)]

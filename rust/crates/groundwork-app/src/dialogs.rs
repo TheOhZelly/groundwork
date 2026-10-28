@@ -5,6 +5,7 @@ use crate::widgets::terrain_picker;
 use eframe::egui::{self, RichText};
 use groundwork_core::generate::GenerateOptions;
 use groundwork_core::{DimensionKind, Terrain};
+use groundwork_export::{McVersion, Outside};
 use std::path::PathBuf;
 
 pub enum Dialog {
@@ -293,10 +294,12 @@ impl NewWorldForm {
 
 // --------------------------------------------------------------- export --
 
+#[derive(Clone)]
 pub struct ExportForm {
     pub path: String,
-    pub void_outside: bool,
+    pub outside: Outside,
     pub overwrite: bool,
+    pub version: McVersion,
 }
 
 impl ExportForm {
@@ -315,8 +318,9 @@ impl ExportForm {
         };
         ExportForm {
             path: base.join(safe).display().to_string(),
-            void_outside: false,
+            outside: Outside::Vanilla,
             overwrite: false,
+            version: McVersion::default(),
         }
     }
 
@@ -324,8 +328,7 @@ impl ExportForm {
         let mut outcome = Outcome::Open;
         modal(ctx, "Export to Minecraft", 460.0, |ui| {
             ui.label(
-                RichText::new("Writes a Minecraft Java Edition 1.21.1 save. Newer versions upgrade it when you open it.")
-                    .color(theme::MUTED),
+                RichText::new("Writes a playable Minecraft Java Edition save.").color(theme::MUTED),
             );
             ui.add_space(6.0);
             ui.label("Save folder");
@@ -344,10 +347,16 @@ impl ExportForm {
                 }
             });
             ui.add_space(4.0);
+            ui.label("Minecraft version");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.version, McVersion::V1_21_11, "1.21.11");
+                ui.selectable_value(&mut self.version, McVersion::V1_21_1, "1.21.1 – 1.21.10");
+            });
             ui.label("Beyond the painted area");
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.void_outside, false, "🌍 Normal Minecraft terrain");
-                ui.selectable_value(&mut self.void_outside, true, "⬛ Empty void");
+                ui.selectable_value(&mut self.outside, Outside::Vanilla, "🌍 Minecraft terrain");
+                ui.selectable_value(&mut self.outside, Outside::Ocean, "🌊 Endless ocean");
+                ui.selectable_value(&mut self.outside, Outside::Void, "⬛ Void");
             });
             ui.checkbox(
                 &mut self.overwrite,

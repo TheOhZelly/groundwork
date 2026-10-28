@@ -10,3 +10,6 @@ authors.workspace = true
 groundwork-core.workspace = true
 groundwork-nbt.workspace = true
 groundwork-anvil.workspace = true
+
+[dev-dependencies]
+png.workspace = true

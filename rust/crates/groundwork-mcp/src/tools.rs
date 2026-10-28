@@ -6,7 +6,7 @@ use groundwork_core::generate::{generate, GenerateOptions};
 use groundwork_core::ops::{self, Falloff};
 use groundwork_core::terrain::Fidelity;
 use groundwork_core::{biomes, layers, render, Dimension, DimensionKind, GameMode, Terrain, World};
-use groundwork_export::{ExportOptions, Outside};
+use groundwork_export::{ExportOptions, McVersion, Outside};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
@@ -472,22 +472,31 @@ impl Server {
         let outside = match a.str("outside")?.unwrap_or("vanilla") {
             "vanilla" => Outside::Vanilla,
             "void" => Outside::Void,
+            "ocean" => Outside::Ocean,
             other => {
                 return Err(format!(
-                    "unknown outside mode {other:?}; use vanilla or void"
+                    "unknown outside mode {other:?}; use vanilla, void or ocean"
                 ))
             }
+        };
+        let version = match a.str("minecraft_version")? {
+            None => McVersion::default(),
+            Some(v) => McVersion::parse(v).ok_or_else(|| {
+                format!("unsupported Minecraft version {v:?}; use 1.21.11 or 1.21.1")
+            })?,
         };
         let options = ExportOptions {
             outside,
             overwrite: a.bool("overwrite")?.unwrap_or(false),
+            version,
+            threads: a.i32("threads")?.map(|t| t.max(1) as usize),
         };
         let started = std::time::Instant::now();
         let report = groundwork_export::export(world, &path, &options)
             .map_err(|e| format!("export failed: {e}"))?;
         Ok(text(json!({
             "exported_to": report.path.display().to_string(),
-            "minecraft_version": groundwork_export::VERSION_NAME,
+            "minecraft_version": version.name(),
             "chunks": report.chunks,
             "region_files": report.regions,
             "seconds": (started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
@@ -623,10 +632,10 @@ pub fn definitions() -> Vec<Value> {
             brush_properties(), json!({ "iterations": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Strength (default 2)" } }), &[], false),
         tool("paint_terrain", "Paint terrain", "Paint a terrain type (surface material). Partial falloff strength scatters the terrain.",
             brush_properties(), json!({ "terrain": { "type": "string", "description": "Terrain id or name, e.g. SAND, Bare Grass" } }), &["terrain"], false),
-        tool("paint_layer", "Paint layer", "Paint a layer: Frost, Void, FloodWithLava (value 1 to add, 0 to remove) or Biome (give biome).",
+        tool("paint_layer", "Paint layer", "Paint a layer: Frost, Void, FloodWithLava (value 1 to add, 0 to remove), Deciduous or Pine forest (value 0–15 sets tree density; 0 removes), or Biome (give biome).",
             brush_properties(),
             json!({
-                "layer": { "type": "string", "enum": ["Frost", "Void", "FloodWithLava", "Biome"] },
+                "layer": { "type": "string", "enum": ["Frost", "Void", "FloodWithLava", "Biome", "Deciduous", "Pine"] },
                 "value": { "type": "integer", "minimum": 0, "description": "Layer value (default: on)" },
                 "biome": { "type": "string", "description": "For the Biome layer: name, minecraft id or 'auto'" },
             }),
@@ -671,12 +680,14 @@ pub fn definitions() -> Vec<Value> {
             }),
             &[], true),
         tool("export_minecraft", "Export to Minecraft",
-            "Write a playable Minecraft Java Edition save (1.21.1 format; opens in later versions). Point path at a new folder, e.g. inside .minecraft/saves.",
+            "Write a playable Minecraft Java Edition save (1.21.11 by default, or 1.21.1 for older 1.21 releases). Point path at a new folder, e.g. inside .minecraft/saves.",
             none(),
             json!({
                 "path": { "type": "string", "description": "Save directory to create" },
-                "outside": { "type": "string", "enum": ["vanilla", "void"], "description": "What generates beyond the painted area (default vanilla)" },
+                "outside": { "type": "string", "enum": ["vanilla", "void", "ocean"], "description": "What generates beyond the painted area: vanilla terrain (default), empty void, or endless ocean" },
                 "overwrite": { "type": "boolean", "description": "Write into a folder that already holds a world" },
+                "minecraft_version": { "type": "string", "enum": ["1.21.11", "1.21.1"], "description": "Save format (default 1.21.11)" },
+                "threads": { "type": "integer", "minimum": 1, "description": "Worker threads (default: all cores)" },
             }),
             &["path"], false),
         tool("undo", "Undo", "Revert the last edit (up to 10 steps).", none(), json!({}), &[], false),

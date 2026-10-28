@@ -1,7 +1,7 @@
 //! `level.dat` for Minecraft 1.21. Equivalent of `Java118Level` for the
 //! settings the Rust model has so far.
 
-use crate::{Error, Outside, DATA_VERSION, VERSION_NAME};
+use crate::{Error, McVersion, Outside};
 use groundwork_core::{GameMode, World};
 use groundwork_nbt::{compound, Compound, List, Tag, TAG_COMPOUND, TAG_STRING};
 use std::path::Path;
@@ -15,6 +15,7 @@ pub fn write_level_dat(
     dir: &Path,
     spawn_y: i32,
     outside: Outside,
+    version: McVersion,
 ) -> Result<(), Error> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -33,6 +34,22 @@ pub fn write_level_dat(
             noise_generator("minecraft:overworld", multi_noise("minecraft:overworld"))
         }
         // The "The Void" superflat preset.
+        // Bedrock, stone up to y=31, a sand floor at 32 and water up to 62.
+        Outside::Ocean => compound! {
+            "type" => "minecraft:flat",
+            "settings" => compound! {
+                "biome" => "minecraft:ocean",
+                "features" => false,
+                "lakes" => false,
+                "layers" => List::compounds(vec![
+                    compound! { "block" => "minecraft:bedrock", "height" => 1i32 },
+                    compound! { "block" => "minecraft:stone", "height" => 95i32 },
+                    compound! { "block" => "minecraft:sand", "height" => 1i32 },
+                    compound! { "block" => "minecraft:water", "height" => 30i32 },
+                ]),
+                "structure_overrides" => List::empty(TAG_STRING),
+            },
+        },
         Outside::Void => compound! {
             "type" => "minecraft:flat",
             "settings" => compound! {
@@ -46,11 +63,11 @@ pub fn write_level_dat(
     };
 
     let data = compound! {
-        "DataVersion" => DATA_VERSION,
+        "DataVersion" => version.data_version(),
         "version" => ANVIL_VERSION,
         "Version" => compound! {
-            "Id" => DATA_VERSION,
-            "Name" => VERSION_NAME,
+            "Id" => version.data_version(),
+            "Name" => version.name(),
             "Series" => "main",
             "Snapshot" => false,
         },

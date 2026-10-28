@@ -1,6 +1,5 @@
 //! Builds the NBT for one 1.18+ chunk from a tile.
 
-use crate::DATA_VERSION;
 use groundwork_core::dimension::split;
 use groundwork_core::noise::hash01;
 use groundwork_core::terrain::Fidelity;
@@ -12,8 +11,10 @@ use std::sync::Mutex;
 const AIR: &str = "minecraft:air";
 const STONE: &str = "minecraft:stone";
 
-/// Chunk-wide block palette plus per-block indices into it.
-struct Blocks {
+/// Chunk-wide block palette plus per-block indices into it. Palette
+/// entries are block ids with optional properties, e.g.
+/// `minecraft:oak_leaves[persistent=true]`.
+pub(crate) struct Blocks {
     palette: Vec<String>,
     min_y: i32,
     data: Vec<u16>,
@@ -28,7 +29,7 @@ impl Blocks {
         }
     }
 
-    fn id(&mut self, name: &str) -> u16 {
+    pub(crate) fn id(&mut self, name: &str) -> u16 {
         match self.palette.iter().position(|p| p == name) {
             Some(i) => i as u16,
             None => {
@@ -45,6 +46,19 @@ impl Blocks {
     fn set(&mut self, x: i32, y: i32, z: i32, id: u16) {
         self.data[(((y - self.min_y) * 256) + z * 16 + x) as usize] = id;
     }
+
+    /// Places a block only where there is air, so trees never cut into
+    /// terrain or water. Coordinates are chunk-local; out-of-range ones are
+    /// ignored.
+    pub(crate) fn set_if_air(&mut self, x: i32, y: i32, z: i32, id: u16) {
+        let max_y = self.min_y + (self.data.len() / 256) as i32;
+        if (0..16).contains(&x) && (0..16).contains(&z) && (self.min_y..max_y).contains(&y) {
+            let i = (((y - self.min_y) * 256) + z * 16 + x) as usize;
+            if self.data[i] == 0 {
+                self.data[i] = id;
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -55,6 +69,7 @@ pub fn build(
     chunk_z: i32,
     min_y: i32,
     max_y: i32,
+    data_version: i32,
     warnings: &Mutex<Vec<String>>,
 ) -> Compound {
     let mut blocks = Blocks::new(min_y, max_y);
@@ -163,6 +178,8 @@ pub fn build(
         }
     }
 
+    crate::trees::place(dim, &mut blocks, chunk_x, chunk_z, max_y);
+
     if !problems.is_empty() {
         warnings.lock().unwrap().extend(problems);
     }
@@ -180,7 +197,7 @@ pub fn build(
     }
 
     compound! {
-        "DataVersion" => DATA_VERSION,
+        "DataVersion" => data_version,
         "xPos" => chunk_x,
         "yPos" => min_y.div_euclid(16),
         "zPos" => chunk_z,
@@ -248,6 +265,22 @@ fn resolve_biome(
     biomes::find(name).unwrap_or(PLAINS)
 }
 
+/// `minecraft:x[a=b,c=d]` → `{Name: "minecraft:x", Properties: {a: "b", c: "d"}}`.
+fn block_state(id: &str) -> Compound {
+    match id.split_once('[') {
+        None => compound! { "Name" => id },
+        Some((name, props)) => {
+            let mut properties = Compound::new();
+            for pair in props.trim_end_matches(']').split(',') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    properties.insert(k.trim().to_owned(), Tag::String(v.trim().to_owned()));
+                }
+            }
+            compound! { "Name" => name, "Properties" => properties }
+        }
+    }
+}
+
 fn bits_for(len: usize) -> u32 {
     if len <= 1 {
         0
@@ -279,12 +312,7 @@ fn block_container(blocks: &Blocks, indices: &[u16]) -> Compound {
             })
         })
         .collect();
-    let palette = List::compounds(
-        local
-            .iter()
-            .map(|&g| compound! { "Name" => blocks.name(g) })
-            .collect(),
-    );
+    let palette = List::compounds(local.iter().map(|&g| block_state(blocks.name(g))).collect());
     let mut c = compound! { "palette" => palette };
     if local.len() > 1 {
         let bits = bits_for(local.len()).max(4);

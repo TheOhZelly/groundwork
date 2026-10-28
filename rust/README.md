@@ -13,7 +13,7 @@ The port works bottom-up: file formats first, then the world model, then exporti
 | `groundwork-nbt` | JNBT | Complete: all tag types, Java modified UTF-8, gzip/zlib/raw |
 | `groundwork-anvil` | `org.pepsoft.minecraft.RegionFile` | Complete: read/write, sector reuse, external `.mcc` chunks (read) |
 | `groundwork-core` | `Tile`, `Dimension`, `World2`, `Terrain`, core operations, `TileRenderer` | Partial, see below |
-| `groundwork-export` | `org.pepsoft.worldpainter.exporting`, `Java118Level` | Partial: Java Edition 1.21 only |
+| `groundwork-export` | `org.pepsoft.worldpainter.exporting`, `Java118Level` | Partial: Java Edition 1.21.11 and 1.21.1 |
 | `groundwork-mcp` | (new) | MCP server, 21 tools |
 | `groundwork-app` | WPGUI (Swing) | Early: editor with sculpting, painting, flood, spawn, undo/redo, save/open, export |
 
@@ -29,6 +29,22 @@ That builds and opens the editor; the program is `target/release/groundwork(.exe
 - **Tools:** 1 Raise, 2 Lower, 3 Flatten, 4 Smooth, 5 Paint terrain, 6 Paint layer, 7 Flood, 8 Spawn.
 - **Brushes:** left-drag applies the tool; right-drag does the opposite (lower, erase, drain), and with Paint terrain it picks the terrain under the cursor. `[` and `]` change the brush size.
 - **Files:** Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E export, Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo.
+
+## Building a world from map images
+
+`examples/from_map_images.rs` in `groundwork-export` builds a large world from three renders of a map made with Azgaar's Fantasy Map Generator:
+
+1. the plain map,
+2. the height map,
+3. the biome map.
+
+It aligns the three images, upscales them with noise for coastline, hill and ridge detail, and maps the biome colours to terrain, Minecraft biomes and forests. It then saves a `.gwork`, renders a preview and exports a 1.21.11 save surrounded by endless ocean.
+
+```bash
+cargo run --release -p groundwork-export --example from_map_images -- map.png heights.png biomes.png OUT_DIR "World name" 10240
+```
+
+`examples/inspect_chunk.rs` prints the blocks and biomes of any chunk in an exported save.
 
 ## Running the MCP server
 
@@ -58,17 +74,19 @@ Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`
   - Water levels.
   - Terrain stored as WorldPainter's enum ordinals: all 162 `Terrain` constants, generated from `Terrain.java` by `tools/gen_terrain.py`.
   - Bit, nibble and byte layers.
-- **Layers:** Frost, Void, FloodWithLava and Biome. The biome ids are generated from `Minecraft1_21Biomes.java` by `tools/gen_biomes.py`.
+- **Layers:** Frost, Void, FloodWithLava, Biome, and the Deciduous and Pine forest layers. The biome ids are generated from `Minecraft1_21Biomes.java` by `tools/gen_biomes.py`.
 - **New worlds:** a noise height map plus one terrain, with `SimpleTheme`'s beach rule.
 - **Operations:**
   - Raise/lower, flatten, smooth, paint terrain and paint layer, with circle, square or rectangle brushes and four falloff curves.
   - Flood and drain, as a bounded fill.
   - Set water level.
 - **Preview:** a top-down render with hill shading.
-- **Export to Minecraft Java 1.21.1:**
+- **Export to Minecraft Java 1.21.11 or 1.21.1:**
+  - These match WorldPainter's `JAVA_ANVIL_1_21_11` and `JAVA_ANVIL_1_20_5` platforms, which share one format and differ only in data version.
   - Bedrock, a stone-to-deepslate subsurface, the terrain top layer, water and lava, ice and snow from Frost, Void columns and biomes.
-  - Writes `level.dat` with either vanilla or void generation outside the painted area.
-  - Uses one thread per region file.
+  - Trees from the forest layers: oak and birch for Deciduous, spruce for Pine. Density follows WorldPainter's rule, and canopies cross chunk borders.
+  - Writes `level.dat` with vanilla terrain, void, or endless ocean outside the painted area.
+  - Uses one thread per region file; the thread count can be capped.
   - Leaves lighting and height maps for Minecraft to compute on first load.
   - Not yet verified by loading in Minecraft itself.
 
@@ -89,7 +107,7 @@ Rough order. Each step should land with tests against WorldPainter's behaviour.
 1. **Exact terrain materials:** port `MixedMaterial` and each terrain's `getMaterial` overrides, plus plants on Grass and Desert.
 2. **WorldPainter `.world` import:** a reader for the Java serialization stream limited to WorldPainter's classes, so existing projects open.
 3. **Remaining layers:**
-   - Trees (deciduous, pine, jungle, swamp, mangrove)
+   - Trees: Java's exact tree shapes, plus jungle, swamp and mangrove
    - Caverns, caves, chasms and tunnels
    - Resources (ores)
    - Plants

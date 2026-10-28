@@ -1,23 +1,57 @@
-//! Export to Minecraft Java Edition 1.21 (Anvil, DataVersion 3955).
+//! Export to Minecraft Java Edition 1.21 (Anvil).
 //!
-//! Covers the core of `org.pepsoft.worldpainter.exporting` for one platform:
-//! terrain columns (top layer, subsurface, bedrock), water and lava, the
-//! Frost, Void and Biome layers, `level.dat` and the region files. Chunks are
+//! Covers the core of `org.pepsoft.worldpainter.exporting` for the
+//! `JAVA_ANVIL_1_20_5` and `JAVA_ANVIL_1_21_11` platforms, which share one
+//! chunk and level.dat format and differ only in data version: terrain
+//! columns (top layer, subsurface, bedrock), water and lava, the Frost, Void,
+//! Biome and tree layers, `level.dat` and the region files. Chunks are
 //! written with `isLightOn = 0` and no height maps so that Minecraft computes
 //! lighting and height maps itself on first load.
 
 mod chunk;
 mod level;
+mod trees;
 
 use groundwork_core::{Dimension, DimensionKind, World, TILE_SIZE};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// Minecraft 1.21.1. Minecraft upgrades worlds from older data versions on
-/// load, so this also opens in later releases.
-pub const DATA_VERSION: i32 = 3955;
-pub const VERSION_NAME: &str = "1.21.1";
+/// Minecraft release to write. Minecraft upgrades worlds from older data
+/// versions on load, but refuses (or warns about) worlds from newer ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum McVersion {
+    /// 1.21.1, readable by every 1.21.x release.
+    V1_21_1,
+    /// 1.21.11, WorldPainter's `JAVA_ANVIL_1_21_11` platform.
+    #[default]
+    V1_21_11,
+}
+
+impl McVersion {
+    pub fn data_version(self) -> i32 {
+        match self {
+            McVersion::V1_21_1 => 3955,
+            McVersion::V1_21_11 => 4671,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            McVersion::V1_21_1 => "1.21.1",
+            McVersion::V1_21_11 => "1.21.11",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "1.21.1" => Some(McVersion::V1_21_1),
+            "1.21.11" => Some(McVersion::V1_21_11),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outside {
@@ -25,6 +59,9 @@ pub enum Outside {
     Vanilla,
     /// Nothing beyond the painted area (overworld only).
     Void,
+    /// Endless flat ocean beyond the painted area, with the surface at
+    /// y=62 like vanilla seas (overworld only).
+    Ocean,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +69,9 @@ pub struct ExportOptions {
     pub outside: Outside,
     /// Allow writing into a directory that already contains a level.dat.
     pub overwrite: bool,
+    pub version: McVersion,
+    /// Worker threads; `None` uses every core.
+    pub threads: Option<usize>,
 }
 
 impl Default for ExportOptions {
@@ -39,6 +79,8 @@ impl Default for ExportOptions {
         ExportOptions {
             outside: Outside::Vanilla,
             overwrite: false,
+            version: McVersion::default(),
+            threads: None,
         }
     }
 }
@@ -94,6 +136,17 @@ pub fn export(
     dir: impl AsRef<Path>,
     options: &ExportOptions,
 ) -> Result<ExportReport, Error> {
+    export_with_progress(world, dir, options, |_, _| {})
+}
+
+/// Like [`export`], calling `progress(regions_done, regions_total)` from the
+/// worker threads as region files complete.
+pub fn export_with_progress(
+    world: &World,
+    dir: impl AsRef<Path>,
+    options: &ExportOptions,
+    progress: impl Fn(usize, usize) + Sync,
+) -> Result<ExportReport, Error> {
     let dir = dir.as_ref();
     if dir.join("level.dat").exists() && !options.overwrite {
         return Err(Error::Refused(format!(
@@ -108,6 +161,13 @@ pub fn export(
         ..Default::default()
     };
     let warnings = Mutex::new(Vec::new());
+    let total: usize = world
+        .dimensions()
+        .iter()
+        .map(|d| region_coords(d).len())
+        .sum();
+    let done = AtomicUsize::new(0);
+    let tick = || progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
     for dim in world.dimensions() {
         let region_dir = match dim.kind {
             DimensionKind::Overworld => dir.join("region"),
@@ -115,7 +175,7 @@ pub fn export(
             DimensionKind::End => dir.join("DIM1").join("region"),
         };
         std::fs::create_dir_all(&region_dir)?;
-        let (chunks, regions) = export_dimension(dim, &region_dir, &warnings)?;
+        let (chunks, regions) = export_dimension(dim, &region_dir, options, &warnings, &tick)?;
         report.chunks += chunks;
         report.regions += regions;
     }
@@ -127,7 +187,7 @@ pub fn export(
             Some(d.int_height_at(x, y)?.max(d.water_level_at(x, y)?) + 1)
         })
         .unwrap_or(64);
-    level::write_level_dat(world, dir, spawn_height, options.outside)?;
+    level::write_level_dat(world, dir, spawn_height, options.outside, options.version)?;
     std::fs::write(dir.join("session.lock"), "\u{2603}")?;
 
     let mut warnings = warnings.into_inner().unwrap();
@@ -137,11 +197,25 @@ pub fn export(
     Ok(report)
 }
 
+/// Region coordinates covered by a dimension's tiles (512 blocks = 4 tiles).
+fn region_coords(dim: &Dimension) -> Vec<(i32, i32)> {
+    let mut regions: Vec<(i32, i32)> = dim
+        .tile_coords()
+        .into_iter()
+        .map(|(tx, ty)| (tx >> 2, ty >> 2))
+        .collect();
+    regions.sort_unstable();
+    regions.dedup();
+    regions
+}
+
 /// Exports one dimension's tiles, one region (4×4 tiles) per worker thread.
 fn export_dimension(
     dim: &Dimension,
     region_dir: &Path,
+    options: &ExportOptions,
     warnings: &Mutex<Vec<String>>,
+    tick: &(impl Fn() + Sync),
 ) -> Result<(usize, usize), Error> {
     let (vanilla_min, vanilla_max) = dim.kind.vanilla_height_range();
     let (min_y, max_y) = (
@@ -155,18 +229,12 @@ fn export_dimension(
         ));
     }
 
-    // Region coordinates: 512 blocks = 4 tiles.
-    let mut regions: Vec<(i32, i32)> = dim
-        .tile_coords()
-        .into_iter()
-        .map(|(tx, ty)| (tx >> 2, ty >> 2))
-        .collect();
-    regions.sort_unstable();
-    regions.dedup();
-
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(regions.len().max(1));
+    let regions = region_coords(dim);
+    let threads = options
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()))
+        .clamp(1, regions.len().max(1));
+    let data_version = options.version.data_version();
     let next = Mutex::new(regions.iter());
     let chunk_total = Mutex::new(0usize);
     let first_error: Mutex<Option<Error>> = Mutex::new(None);
@@ -179,8 +247,20 @@ fn export_dimension(
                 if first_error.lock().unwrap().is_some() {
                     break;
                 }
-                match export_region(dim, region_dir, rx, rz, min_y, max_y, warnings) {
-                    Ok(n) => *chunk_total.lock().unwrap() += n,
+                match export_region(
+                    dim,
+                    region_dir,
+                    rx,
+                    rz,
+                    min_y,
+                    max_y,
+                    data_version,
+                    warnings,
+                ) {
+                    Ok(n) => {
+                        *chunk_total.lock().unwrap() += n;
+                        tick();
+                    }
                     Err(e) => {
                         first_error.lock().unwrap().get_or_insert(e);
                     }
@@ -194,6 +274,7 @@ fn export_dimension(
     Ok((chunk_total.into_inner().unwrap(), regions.len()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_region(
     dim: &Dimension,
     region_dir: &Path,
@@ -201,6 +282,7 @@ fn export_region(
     rz: i32,
     min_y: i32,
     max_y: i32,
+    data_version: i32,
     warnings: &Mutex<Vec<String>>,
 ) -> Result<usize, Error> {
     let path = region_dir.join(groundwork_anvil::region_file_name(rx, rz));
@@ -216,7 +298,16 @@ fn export_region(
                 for cx in 0..chunks_per_tile {
                     let chunk_x = tx * chunks_per_tile + cx;
                     let chunk_z = ty * chunks_per_tile + cz;
-                    let nbt = chunk::build(dim, tile, chunk_x, chunk_z, min_y, max_y, warnings);
+                    let nbt = chunk::build(
+                        dim,
+                        tile,
+                        chunk_x,
+                        chunk_z,
+                        min_y,
+                        max_y,
+                        data_version,
+                        warnings,
+                    );
                     region.write_chunk(split_region(chunk_x), split_region(chunk_z), &nbt)?;
                     count += 1;
                 }

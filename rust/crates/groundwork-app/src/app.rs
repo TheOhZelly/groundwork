@@ -9,7 +9,7 @@ use eframe::egui::{self, vec2, Key, KeyboardShortcut, Modifiers, PointerButton, 
 use groundwork_core::generate::generate;
 use groundwork_core::ops::{self, Falloff};
 use groundwork_core::{biomes, layers, DimensionKind, GameMode, World};
-use groundwork_export::{ExportOptions, ExportReport, Outside};
+use groundwork_export::{ExportOptions, ExportReport};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -254,12 +254,10 @@ impl App {
         let world = doc.world.clone();
         let target = PathBuf::from(form.path.trim());
         let options = ExportOptions {
-            outside: if form.void_outside {
-                Outside::Void
-            } else {
-                Outside::Vanilla
-            },
+            outside: form.outside,
             overwrite: form.overwrite,
+            version: form.version,
+            threads: None,
         };
         let (tx, rx) = mpsc::channel();
         let dir = target.clone();
@@ -568,11 +566,33 @@ impl App {
                                             "Frost" => "❄  Frost — snow and ice",
                                             "Void" => "⬛  Void — remove everything",
                                             "FloodWithLava" => "🔥  Lava instead of water",
+                                            "Deciduous" => "🌳  Deciduous forest — oak, birch",
+                                            "Pine" => "🌲  Pine forest — spruce",
                                             _ => "🌿  Biome",
                                         };
                                         ui.selectable_value(&mut self.paint.layer, i, label);
                                     }
                                 });
+                                if layers::TREE_LAYERS
+                                    .iter()
+                                    .any(|l| l.id == self.paint.layer_def().id)
+                                {
+                                    ui.add_space(6.0);
+                                    theme::card(ui, "Density", |ui| {
+                                        ui.spacing_mut().slider_width = ui.available_width() - 60.0;
+                                        ui.add(egui::Slider::new(
+                                            &mut self.paint.tree_density,
+                                            1..=15,
+                                        ));
+                                        ui.label(
+                                            RichText::new(
+                                                "15 is a dense forest; right-drag clears trees",
+                                            )
+                                            .small()
+                                            .color(theme::MUTED),
+                                        );
+                                    });
+                                }
                                 if self.paint.layer_def().id == layers::BIOME.id {
                                     ui.add_space(6.0);
                                     theme::card(ui, "Biome", |ui| {
@@ -995,11 +1015,7 @@ impl App {
                 Outcome::Open => {}
                 Outcome::Cancel => self.dialog = None,
                 Outcome::Accept(()) => {
-                    let form = ExportForm {
-                        path: form.path.clone(),
-                        void_outside: form.void_outside,
-                        overwrite: form.overwrite,
-                    };
+                    let form = form.clone();
                     self.start_export(&form);
                 }
             },

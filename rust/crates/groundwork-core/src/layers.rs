@@ -58,7 +58,25 @@ pub const BIOME: &LayerDef = &LayerDef {
     default: crate::biomes::BIOME_AUTO,
 };
 
-pub const ALL: [&LayerDef; 4] = [FROST, VOID, FLOOD_WITH_LAVA, BIOME];
+/// Port of `DeciduousForest`: oak and birch trees. Density 0–15; a column
+/// gets a tree with probability (density² + 1) / 1280, as in Java.
+pub const DECIDUOUS: &LayerDef = &LayerDef {
+    id: "Deciduous",
+    description: "a deciduous forest of oak and birch trees; 0–15 sets the density",
+    size: DataSize::Nibble,
+    default: 0,
+};
+/// Port of `PineForest`: spruce trees, same density rule.
+pub const PINE: &LayerDef = &LayerDef {
+    id: "Pine",
+    description: "a pine forest of spruce trees; 0–15 sets the density",
+    size: DataSize::Nibble,
+    default: 0,
+};
+
+pub const ALL: [&LayerDef; 6] = [FROST, VOID, FLOOD_WITH_LAVA, BIOME, DECIDUOUS, PINE];
+
+pub const TREE_LAYERS: [&LayerDef; 2] = [DECIDUOUS, PINE];
 
 pub fn find(id: &str) -> Option<&'static LayerDef> {
     ALL.iter().copied().find(|l| l.id.eq_ignore_ascii_case(id))

@@ -1279,6 +1279,7 @@ dependencies = [
  "groundwork-anvil",
  "groundwork-core",
  "groundwork-nbt",
+ "png 0.17.16",
 ]
 
 [[package]]

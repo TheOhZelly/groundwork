@@ -167,8 +167,19 @@ fn column_colour(dim: &Dimension, x: i32, y: i32, step: i32) -> Option<[u8; 3]> 
         if frost && !lava {
             rgb = rgb.map(|c| c * 0.3 + 200.0 * 0.7);
         }
-    } else if frost {
-        rgb = rgb.map(|c| c * 0.2 + 245.0 * 0.8);
+    } else {
+        // Forests darken towards their foliage colour with density.
+        let deciduous = dim.layer_value_at(layers::DECIDUOUS, x, y).unwrap_or(0) as f32 / 15.0;
+        let pine = dim.layer_value_at(layers::PINE, x, y).unwrap_or(0) as f32 / 15.0;
+        for (amount, foliage) in [(deciduous, [38.0, 110.0, 40.0]), (pine, [30.0, 72.0, 46.0])] {
+            let a = amount * 0.75;
+            if a > 0.0 {
+                rgb = [0, 1, 2].map(|i| rgb[i] * (1.0 - a) + foliage[i] * shade * a);
+            }
+        }
+        if frost {
+            rgb = rgb.map(|c| c * 0.2 + 245.0 * 0.8);
+        }
     }
     Some(rgb.map(|c| c.clamp(0.0, 255.0) as u8))
 }
