@@ -3,7 +3,7 @@
 use crate::canvas::{MapView, Overlay};
 use crate::dialogs::{self, Dialog, ExportForm, NewWorldForm, Outcome, PendingAction};
 use crate::theme;
-use crate::tools::{self, Brush, PaintSettings, StrokeState, Tool};
+use crate::tools::{self, Brush, BrushShape, PaintSettings, StrokeState, Tool};
 use crate::widgets;
 use eframe::egui::{self, vec2, Key, KeyboardShortcut, Modifiers, PointerButton, RichText, Sense};
 use groundwork_core::generate::generate;
@@ -615,8 +615,8 @@ impl App {
                                 ui.label(RichText::new("Shape").small().color(theme::MUTED));
                                 widgets::segmented(
                                     ui,
-                                    &mut self.brush.square,
-                                    &[(false, "● Round"), (true, "■ Square")],
+                                    &mut self.brush.shape,
+                                    &[(BrushShape::Round, "● Round"), (BrushShape::Square, "■ Square"), (BrushShape::Organic, "☁ Organic")],
                                 );
                                 ui.label(
                                     RichText::new("[ and ] change the size")
@@ -1037,7 +1037,14 @@ impl App {
         let brush = (self.tool.uses_brush() && !space)
             .then_some(())
             .and(self.hover)
-            .map(|(x, y)| (x, y, self.brush.radius, self.brush.square));
+            .map(|(x, y)| {
+                (
+                    x,
+                    y,
+                    self.brush.radius,
+                    self.brush.shape == BrushShape::Square,
+                )
+            });
         let overlay = Overlay {
             spawn: doc.world.spawn,
             brush,

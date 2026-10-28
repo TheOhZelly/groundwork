@@ -107,7 +107,18 @@ impl Args<'_> {
                     y,
                     radius: radius.round() as i32,
                 },
-                other => return Err(format!("unknown brush {other:?}; use circle or square")),
+                // Noise fixed in world space, so overlapping dabs agree.
+                "organic" => Shape::Organic {
+                    x,
+                    y,
+                    radius,
+                    seed: 0x6f72_6761_6e69,
+                },
+                other => {
+                    return Err(format!(
+                        "unknown brush {other:?}; use circle, square or organic"
+                    ))
+                }
             }
         };
         const MAX_AREA: u64 = 16 * 1024 * 1024;
@@ -118,6 +129,15 @@ impl Args<'_> {
             ));
         }
         Ok(shape)
+    }
+
+    /// `dry_land_only: true` restricts painting to columns above water.
+    pub fn mask(&self) -> Result<groundwork_core::ops::Mask, String> {
+        Ok(if self.bool("dry_land_only")?.unwrap_or(false) {
+            groundwork_core::ops::Mask::DryLand
+        } else {
+            groundwork_core::ops::Mask::All
+        })
     }
 
     pub fn falloff(&self, default: Falloff) -> Result<Falloff, String> {

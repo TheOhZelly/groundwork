@@ -98,12 +98,12 @@ impl Server {
                 })
             }
             "paint_terrain" => {
-                let (shape, falloff) = (a.shape()?, a.falloff(Falloff::Constant)?);
+                let (shape, falloff, mask) = (a.shape()?, a.falloff(Falloff::Constant)?, a.mask()?);
                 let terrain = find_terrain(a.req_str("terrain")?)?;
                 self.edit(|d| {
                     Ok(format!(
                         "painted {} columns with {terrain}",
-                        ops::paint_terrain(d, shape, falloff, terrain)
+                        ops::paint_terrain_masked(d, shape, falloff, terrain, mask)
                     ))
                 })
             }
@@ -380,12 +380,12 @@ impl Server {
                     )
                 })?
         };
-        let (shape, falloff) = (a.shape()?, a.falloff(Falloff::Constant)?);
+        let (shape, falloff, mask) = (a.shape()?, a.falloff(Falloff::Constant)?, a.mask()?);
         self.edit(|d| {
             Ok(format!(
                 "set {} to {value} on {} columns",
                 layer.id,
-                ops::paint_layer(d, shape, falloff, layer, value)
+                ops::paint_layer_masked(d, shape, falloff, layer, value, mask)
             ))
         })
     }
@@ -674,7 +674,8 @@ fn brush_properties() -> Map<String, Value> {
         "x": { "type": "integer", "description": "Brush centre, east-west block coordinate" },
         "y": { "type": "integer", "description": "Brush centre, north-south block coordinate (Minecraft z)" },
         "radius": { "type": "number", "minimum": 0, "description": "Brush radius in blocks (default 0 = one column)" },
-        "brush": { "type": "string", "enum": ["circle", "square"], "description": "Brush shape (default circle)" },
+        "brush": { "type": "string", "enum": ["circle", "square", "organic"], "description": "Brush shape (default circle); organic gives a ragged, natural outline, best for painting regions" },
+        "dry_land_only": { "type": "boolean", "description": "Only change columns above water (keeps paint off the sea and lakes)" },
         "x0": { "type": "integer", "description": "Rectangle mode: first corner x (use instead of x/y/radius)" },
         "y0": { "type": "integer", "description": "Rectangle mode: first corner y" },
         "x1": { "type": "integer", "description": "Rectangle mode: opposite corner x (inclusive)" },

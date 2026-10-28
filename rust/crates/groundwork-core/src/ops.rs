@@ -23,6 +23,14 @@ pub enum Shape {
         y: i32,
         radius: i32,
     },
+    /// A circle with a ragged, natural outline: the edge is pushed in and
+    /// out by noise fixed in world space, so overlapping dabs agree.
+    Organic {
+        x: i32,
+        y: i32,
+        radius: f32,
+        seed: u64,
+    },
     /// Inclusive corners.
     Rect {
         x0: i32,
@@ -72,6 +80,27 @@ impl Shape {
     /// Visits each column with its brush strength (0..=1, never 0).
     pub fn for_each(&self, falloff: Falloff, mut f: impl FnMut(i32, i32, f32)) {
         match *self {
+            Shape::Organic { x, y, radius, seed } => {
+                let r = radius.max(1.0);
+                let noise = crate::noise::PerlinNoise::new(seed);
+                // Features about half the radius across, scaled with the brush.
+                let scale = (r as f64 / 2.0).max(4.0);
+                let reach = (r * 1.45).ceil() as i32;
+                for dy in -reach..=reach {
+                    for dx in -reach..=reach {
+                        let (wx, wy) = (x + dx, y + dy);
+                        let warp =
+                            noise.fbm(wx as f64 / scale, wy as f64 / scale, 4, 0.5) as f32 * 0.45;
+                        let d = ((dx * dx + dy * dy) as f32).sqrt() / r + warp;
+                        if d < 1.0 {
+                            let s = falloff.apply(d.max(0.0));
+                            if s > 0.0 {
+                                f(wx, wy, s);
+                            }
+                        }
+                    }
+                }
+            }
             Shape::Circle { x, y, radius } => {
                 let r = radius.max(0.0);
                 let ri = r.ceil() as i32;
@@ -123,6 +152,10 @@ impl Shape {
 
     pub fn area(&self) -> u64 {
         match *self {
+            Shape::Organic { radius, .. } => {
+                let d = 2 * (radius.max(1.0) * 1.45).ceil() as u64 + 1;
+                d * d
+            }
             Shape::Circle { radius, .. } => {
                 let d = 2 * radius.max(0.0).ceil() as u64 + 1;
                 d * d
@@ -208,16 +241,48 @@ fn dither(seed: u64, x: i32, y: i32, strength: f32) -> bool {
     strength >= 1.0 || hash01(seed, x, y) < strength
 }
 
+/// Which columns a paint operation may change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mask {
+    #[default]
+    All,
+    /// Only columns whose ground is above their water level, so painting
+    /// land doesn't spill onto the sea floor or lakes.
+    DryLand,
+}
+
+impl Mask {
+    fn allows(self, dim: &Dimension, x: i32, y: i32) -> bool {
+        match self {
+            Mask::All => true,
+            Mask::DryLand => match (dim.int_height_at(x, y), dim.water_level_at(x, y)) {
+                (Some(h), Some(w)) => w <= h,
+                _ => false,
+            },
+        }
+    }
+}
+
 pub fn paint_terrain(
     dim: &mut Dimension,
     shape: Shape,
     falloff: Falloff,
     terrain: Terrain,
 ) -> usize {
+    paint_terrain_masked(dim, shape, falloff, terrain, Mask::All)
+}
+
+pub fn paint_terrain_masked(
+    dim: &mut Dimension,
+    shape: Shape,
+    falloff: Falloff,
+    terrain: Terrain,
+    mask: Mask,
+) -> usize {
     let seed = dim.seed ^ 0x7465_7272;
     let mut n = 0;
     shape.for_each(falloff, |x, y, s| {
-        if dither(seed, x, y, s) && dim.set_terrain_at(x, y, terrain) {
+        if dither(seed, x, y, s) && mask.allows(dim, x, y) && dim.set_terrain_at(x, y, terrain) {
             n += 1;
         }
     });
@@ -233,6 +298,17 @@ pub fn paint_layer(
     layer: &LayerDef,
     value: u8,
 ) -> usize {
+    paint_layer_masked(dim, shape, falloff, layer, value, Mask::All)
+}
+
+pub fn paint_layer_masked(
+    dim: &mut Dimension,
+    shape: Shape,
+    falloff: Falloff,
+    layer: &LayerDef,
+    value: u8,
+    mask: Mask,
+) -> usize {
     let seed = dim.seed ^ 0x6c61_7965;
     let scaled = layer.size == DataSize::Nibble
         || (layer.size == DataSize::Byte && layer.id != layers::BIOME.id);
@@ -245,7 +321,7 @@ pub fn paint_layer(
         } else {
             None
         };
-        if let Some(v) = applied {
+        if let Some(v) = applied.filter(|_| mask.allows(dim, x, y)) {
             if dim.set_layer_value_at(layer, x, y, v) {
                 n += 1;
             }
@@ -325,7 +401,9 @@ pub fn flood(
 
 fn centre(shape: &Shape) -> (i32, i32) {
     match *shape {
-        Shape::Circle { x, y, .. } | Shape::Square { x, y, .. } => (x, y),
+        Shape::Circle { x, y, .. } | Shape::Square { x, y, .. } | Shape::Organic { x, y, .. } => {
+            (x, y)
+        }
         Shape::Rect { x0, y0, x1, y1 } => ((x0 + x1) / 2, (y0 + y1) / 2),
     }
 }
@@ -430,6 +508,54 @@ mod tests {
         // Drain it again.
         assert_eq!(flood(&mut d, 0, 0, 0, false, 100_000).unwrap(), 21 * 21);
         assert_eq!(d.water_level_at(0, 0), Some(-64));
+    }
+
+    #[test]
+    fn organic_brush_and_dry_land_mask() {
+        let mut d = flat(60.0);
+        // Water over the west half.
+        set_water_level(
+            &mut d,
+            Shape::Rect {
+                x0: -128,
+                y0: -128,
+                x1: -1,
+                y1: 127,
+            },
+            70,
+            false,
+        );
+        let organic = Shape::Organic {
+            x: 0,
+            y: 0,
+            radius: 60.0,
+            seed: 9,
+        };
+        let n = paint_terrain_masked(
+            &mut d,
+            organic,
+            Falloff::Constant,
+            Terrain::Sand,
+            Mask::DryLand,
+        );
+        // Roughly half a 60-block circle, with a ragged edge.
+        assert!((3000..9000).contains(&n), "{n}");
+        assert_eq!(
+            d.terrain_at(-10, 0),
+            Some(Terrain::Grass),
+            "painted under water"
+        );
+        assert_eq!(d.terrain_at(10, 0), Some(Terrain::Sand));
+        // The outline is not a circle: along a ring at 0.9 radius some
+        // columns are in and some out.
+        let ring: Vec<bool> = (0..64)
+            .map(|i| {
+                let a = i as f32 / 64.0 * std::f32::consts::PI - std::f32::consts::FRAC_PI_2;
+                let (x, y) = ((a.cos() * 54.0) as i32, (a.sin() * 54.0) as i32);
+                d.terrain_at(x, y) == Some(Terrain::Sand)
+            })
+            .collect();
+        assert!(ring.contains(&true) && ring.contains(&false), "{ring:?}");
     }
 
     #[test]

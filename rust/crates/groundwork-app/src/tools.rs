@@ -72,12 +72,20 @@ impl Tool {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrushShape {
+    Round,
+    Square,
+    /// Round with a ragged, natural outline.
+    Organic,
+}
+
 #[derive(Debug, Clone)]
 pub struct Brush {
     pub radius: f32,
     pub strength: f32,
     pub falloff: Falloff,
-    pub square: bool,
+    pub shape: BrushShape,
 }
 
 impl Default for Brush {
@@ -86,25 +94,32 @@ impl Default for Brush {
             radius: 24.0,
             strength: 0.5,
             falloff: Falloff::Smooth,
-            square: false,
+            shape: BrushShape::Round,
         }
     }
 }
 
 impl Brush {
     pub fn shape(&self, x: i32, y: i32) -> Shape {
-        if self.square {
-            Shape::Square {
-                x,
-                y,
-                radius: self.radius.round() as i32,
-            }
-        } else {
-            Shape::Circle {
+        match self.shape {
+            BrushShape::Round => Shape::Circle {
                 x,
                 y,
                 radius: self.radius,
-            }
+            },
+            BrushShape::Square => Shape::Square {
+                x,
+                y,
+                radius: self.radius.round() as i32,
+            },
+            // A fixed seed keeps the outline's noise in place in the world,
+            // so successive dabs of a stroke agree.
+            BrushShape::Organic => Shape::Organic {
+                x,
+                y,
+                radius: self.radius,
+                seed: 0x6f72_6761_6e69,
+            },
         }
     }
 }
