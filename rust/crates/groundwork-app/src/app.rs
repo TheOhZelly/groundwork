@@ -332,7 +332,7 @@ impl App {
             outside: form.outside,
             overwrite: form.overwrite,
             version: form.version,
-            threads: None,
+            threads: Some(form.cpu.threads()),
         };
         let (tx, rx) = mpsc::channel();
         let dir = target.clone();

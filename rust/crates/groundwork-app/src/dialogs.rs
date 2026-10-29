@@ -430,6 +430,25 @@ pub struct ExportForm {
     pub outside: Outside,
     pub overwrite: bool,
     pub version: McVersion,
+    pub cpu: CpuUse,
+}
+
+/// How hard an export works the processor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuUse {
+    Gentle,
+    Balanced,
+    Full,
+}
+
+impl CpuUse {
+    pub fn threads(self) -> usize {
+        match self {
+            CpuUse::Gentle => 2,
+            CpuUse::Balanced => groundwork_export::balanced_threads(),
+            CpuUse::Full => groundwork_export::all_threads(),
+        }
+    }
 }
 
 impl ExportForm {
@@ -451,6 +470,7 @@ impl ExportForm {
             outside: Outside::Vanilla,
             overwrite: false,
             version: McVersion::default(),
+            cpu: CpuUse::Balanced,
         }
     }
 
@@ -488,6 +508,27 @@ impl ExportForm {
                 ui.selectable_value(&mut self.outside, Outside::Ocean, "🌊 Endless ocean");
                 ui.selectable_value(&mut self.outside, Outside::Void, "⬛ Void");
             });
+            ui.label("Processor use");
+            ui.horizontal(|ui| {
+                for (cpu, label) in [
+                    (CpuUse::Gentle, "Gentle"),
+                    (CpuUse::Balanced, "Balanced"),
+                    (CpuUse::Full, "Full"),
+                ] {
+                    ui.selectable_value(
+                        &mut self.cpu,
+                        cpu,
+                        format!("{label} ({} threads)", cpu.threads()),
+                    );
+                }
+            });
+            if self.cpu == CpuUse::Full {
+                ui.label(
+                    RichText::new("Full speed keeps every core at 100% for minutes. On an unstable CPU that can crash the PC.")
+                        .small()
+                        .color(theme::DANGER),
+                );
+            }
             ui.checkbox(
                 &mut self.overwrite,
                 "Replace a world that's already in this folder",

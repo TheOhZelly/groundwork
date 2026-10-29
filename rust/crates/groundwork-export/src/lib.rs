@@ -20,6 +20,19 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+/// The default export parallelism: a quarter of the machine's threads, at
+/// most six. Exporting on every core keeps all of them at full load for
+/// minutes, which is fast but makes an unstable CPU (such as affected Intel
+/// 13th/14th-generation parts) crash; this is gentler and still quick.
+pub fn balanced_threads() -> usize {
+    (all_threads() / 4).clamp(1, 6)
+}
+
+/// Every hardware thread the machine has.
+pub fn all_threads() -> usize {
+    std::thread::available_parallelism().map_or(4, |n| n.get())
+}
+
 /// Minecraft release to write. Minecraft upgrades worlds from older data
 /// versions on load, but refuses (or warns about) worlds from newer ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,7 +85,7 @@ pub struct ExportOptions {
     /// Allow writing into a directory that already contains a level.dat.
     pub overwrite: bool,
     pub version: McVersion,
-    /// Worker threads; `None` uses every core.
+    /// Worker threads; `None` uses [`balanced_threads`].
     pub threads: Option<usize>,
 }
 
@@ -234,7 +247,7 @@ fn export_dimension(
     let regions = region_coords(dim);
     let threads = options
         .threads
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()))
+        .unwrap_or_else(balanced_threads)
         .clamp(1, regions.len().max(1));
     let ctx = chunk::Context {
         data_version: options.version.data_version(),

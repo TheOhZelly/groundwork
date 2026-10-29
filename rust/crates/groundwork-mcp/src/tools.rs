@@ -806,7 +806,7 @@ pub fn definitions() -> Vec<Value> {
                 "outside": { "type": "string", "enum": ["vanilla", "void", "ocean"], "description": "What generates beyond the painted area: vanilla terrain (default), empty void, or endless ocean" },
                 "overwrite": { "type": "boolean", "description": "Write into a folder that already holds a world" },
                 "minecraft_version": { "type": "string", "enum": ["1.21.11", "1.21.1"], "description": "Save format (default 1.21.11)" },
-                "threads": { "type": "integer", "minimum": 1, "description": "Worker threads (default: all cores)" },
+                "threads": { "type": "integer", "minimum": 1, "description": "Worker threads (default: a quarter of the machine's threads, at most 6; more is faster but works the CPU harder)" },
             }),
             &["path"], false),
         tool("import_height_map", "Import height map",

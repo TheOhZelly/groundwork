@@ -403,3 +403,12 @@ fn ores_and_caverns() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn default_export_is_gentle_on_the_cpu() {
+    let balanced = balanced_threads();
+    assert!((1..=6).contains(&balanced), "{balanced}");
+    assert!(balanced <= all_threads());
+    // Exports without an explicit thread count use the balanced default.
+    assert_eq!(ExportOptions::default().threads, None);
+}
