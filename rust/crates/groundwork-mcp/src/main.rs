@@ -16,7 +16,7 @@ const INSTRUCTIONS: &str = "\
 Groundwork edits Minecraft maps as a height map plus painted terrain and layers, then exports a playable \
 Minecraft Java Edition 1.21 save. Coordinates: x runs east, y runs south (Minecraft's z axis); heights are \
 Minecraft y levels. A world is made of 128×128-block tiles; only columns inside tiles can be edited. \
-Typical flow: create_world → sculpt (raise_lower, flatten, smooth) → paint_terrain / paint_layer → flood for \
+Typical flow: create_world → sculpt (raise_lower, flatten, smooth) → erode for natural valleys → paint_terrain / paint_layer → flood for \
 lakes → render_preview to check → save_world → export_minecraft. Every edit can be reverted with undo.";
 
 fn main() {

@@ -2,7 +2,7 @@
 
 Groundwork is a Minecraft map painter written in Rust. It has a desktop editor for painting worlds with the mouse, and an MCP server so AI assistants can sculpt, paint and export Minecraft maps too.
 
-Groundwork is an unofficial port of [WorldPainter](https://www.worldpainter.net/) by Pepijn Schmitz. It is not affiliated with or endorsed by the WorldPainter project. Much of its design, data model and behaviour comes from WorldPainter's Java source, which this repository keeps alongside in [`../WorldPainter`](../WorldPainter). The Java application is still far more complete; use it for real projects.
+Groundwork is an unofficial port of [WorldPainter](https://www.worldpainter.net/) by Pepijn Schmitz. It is not affiliated with or endorsed by the WorldPainter project. Much of its design, data model and behaviour comes from WorldPainter's Java source, at [Captain-Chaos/WorldPainter](https://github.com/Captain-Chaos/WorldPainter). The Java application is still far more complete; use it for real projects.
 
 The port works bottom-up: file formats first, then the world model, then exporting, then the GUI. Each stage is tested as it goes.
 
@@ -14,8 +14,8 @@ The port works bottom-up: file formats first, then the world model, then exporti
 | `groundwork-anvil` | `org.pepsoft.minecraft.RegionFile` | Complete: read/write, sector reuse, external `.mcc` chunks (read) |
 | `groundwork-core` | `Tile`, `Dimension`, `World2`, `Terrain`, core operations, `TileRenderer` | Partial, see below |
 | `groundwork-export` | `org.pepsoft.worldpainter.exporting`, `Java118Level` | Partial: Java Edition 1.21.11 and 1.21.1 |
-| `groundwork-mcp` | (new) | MCP server, 21 tools |
-| `groundwork-app` | WPGUI (Swing) | Early: editor with sculpting, painting, flood, spawn, undo/redo, save/open, export |
+| `groundwork-mcp` | (new) | MCP server, 24 tools |
+| `groundwork-app` | WPGUI (Swing) | Early: editor with sculpting, erosion, painting, flood, spawn, undo/redo, save/open, export |
 
 ## Running the editor
 
@@ -26,10 +26,11 @@ cargo run --release -p groundwork-app
 That builds and opens the editor; the program is `target/release/groundwork(.exe)`.
 
 - **Navigate:** scroll to zoom, middle-drag or Space+drag to pan, arrow keys to move, F to fit the world, B to switch between terrain and biome view.
-- **Tools:** 1 Raise, 2 Lower, 3 Flatten, 4 Smooth, 5 Paint terrain, 6 Paint layer, 7 Flood, 8 Spawn.
+- **Tools:** 1 Raise, 2 Lower, 3 Flatten, 4 Smooth, 5 Erode, 6 Paint terrain, 7 Paint layer, 8 Flood, 9 Spawn.
 - **Brushes:** left-drag applies the tool; right-drag does the opposite (lower, erase, drain), and with Paint terrain it picks the terrain under the cursor. `[` and `]` change the brush size.
 - **Files:** Ctrl+N new, Ctrl+O open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E export, Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo.
 - **Height maps:** import a greyscale PNG as a new world or into the open one, or export the heights, from the World panel (or "Start from a height map" on the welcome screen).
+- **Erosion:** the Erode tool rains under the brush. "Erode whole map" in the World panel does the entire map in the background; the Rain slider sets how heavily.
 
 ## Building a world from map images
 
@@ -65,7 +66,7 @@ For other clients, add this to their `mcpServers` config:
 { "mcpServers": { "groundwork": { "command": "C:/path/to/groundwork-mcp.exe" } } }
 ```
 
-Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`, `list_biomes`, `list_layers`, `get_column`, `raise_lower`, `flatten`, `smooth`, `paint_terrain`, `paint_layer`, `flood`, `set_water_level`, `add_tiles`, `set_spawn`, `set_world_settings`, `render_preview` (returns a PNG), `export_minecraft`, `undo`.
+Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`, `list_biomes`, `list_layers`, `get_column`, `raise_lower`, `flatten`, `smooth`, `erode`, `paint_terrain`, `paint_layer`, `flood`, `set_water_level`, `add_tiles`, `set_spawn`, `set_world_settings`, `render_preview` (returns a PNG), `export_minecraft`, `import_height_map`, `export_height_map`, `undo`.
 
 ## What's ported
 
@@ -85,6 +86,9 @@ Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`
   - Raise/lower, flatten, smooth, paint terrain and paint layer, with circle, square or rectangle brushes and four falloff curves.
   - Flood and drain, as a bounded fill.
   - Set water level.
+- **Erosion (new, not in WorldPainter):** hydraulic erosion by simulated raindrops, as a brush or over the whole map.
+  - Rain cuts gullies and valleys into slopes and builds fans at their feet and deltas where it meets water. Land under water is left alone.
+  - Large maps are eroded in overlapping windows on several threads; the result is the same whatever the thread count.
 - **Preview:** a top-down render with hill shading.
 - **Export to Minecraft Java 1.21.11 or 1.21.1:**
   - These match WorldPainter's `JAVA_ANVIL_1_21_11` and `JAVA_ANVIL_1_20_5` platforms, which share one format and differ only in data version.
@@ -93,7 +97,7 @@ Tools: `create_world`, `open_world`, `save_world`, `world_info`, `list_terrains`
   - Writes `level.dat` with vanilla terrain, void, or endless ocean outside the painted area.
   - Uses one thread per region file; the thread count can be capped.
   - Leaves lighting and height maps for Minecraft to compute on first load.
-  - Not yet verified by loading in Minecraft itself.
+  - Exported worlds load and play in Minecraft.
 
 ## Known differences from WorldPainter
 
@@ -131,11 +135,11 @@ cargo test
 cargo clippy --all-targets
 ```
 
-Regenerate the tables after WorldPainter's Java enums change:
+The terrain and biome tables are generated from WorldPainter's Java enums. To regenerate them after those change, clone [WorldPainter](https://github.com/Captain-Chaos/WorldPainter) next to this repository and run:
 
 ```bash
-python -I tools/gen_terrain.py ../WorldPainter/WPCore/src/main/java/org/pepsoft/worldpainter/Terrain.java crates/groundwork-core/src/terrain/table.rs
-python -I tools/gen_biomes.py ../WorldPainter/WPCore/src/main/java/org/pepsoft/worldpainter/biomeschemes/Minecraft1_21Biomes.java crates/groundwork-core/src/biomes_table.rs
+python -I tools/gen_terrain.py ../../WorldPainter/WorldPainter/WPCore/src/main/java/org/pepsoft/worldpainter/Terrain.java crates/groundwork-core/src/terrain/table.rs
+python -I tools/gen_biomes.py ../../WorldPainter/WorldPainter/WPCore/src/main/java/org/pepsoft/worldpainter/biomeschemes/Minecraft1_21Biomes.java crates/groundwork-core/src/biomes_table.rs
 ```
 
 On Windows, use the MSVC toolchain with Visual Studio Build Tools (C++ workload). The GNU toolchain can't build the editor without a full MinGW-w64 install.

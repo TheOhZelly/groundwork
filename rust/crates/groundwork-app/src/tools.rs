@@ -1,6 +1,8 @@
 //! Editing tools and how a brush stroke applies them.
 
+use groundwork_core::erosion::{self, ErosionOptions};
 use groundwork_core::layers::DataSize;
+use groundwork_core::noise::splitmix64;
 use groundwork_core::ops::{self, Falloff, Shape};
 use groundwork_core::{biomes, layers, Dimension, Terrain};
 
@@ -10,6 +12,7 @@ pub enum Tool {
     Lower,
     Flatten,
     Smooth,
+    Erode,
     Terrain,
     Layer,
     Water,
@@ -17,11 +20,12 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 8] = [
+    pub const ALL: [Tool; 9] = [
         Tool::Raise,
         Tool::Lower,
         Tool::Flatten,
         Tool::Smooth,
+        Tool::Erode,
         Tool::Terrain,
         Tool::Layer,
         Tool::Water,
@@ -34,6 +38,7 @@ impl Tool {
             Tool::Lower => "⬇",
             Tool::Flatten => "⬌",
             Tool::Smooth => "〰",
+            Tool::Erode => "🌊",
             Tool::Terrain => "🖌",
             Tool::Layer => "❄",
             Tool::Water => "💧",
@@ -47,6 +52,7 @@ impl Tool {
             Tool::Lower => "Lower",
             Tool::Flatten => "Flatten",
             Tool::Smooth => "Smooth",
+            Tool::Erode => "Erode",
             Tool::Terrain => "Paint terrain",
             Tool::Layer => "Paint layer",
             Tool::Water => "Flood",
@@ -60,6 +66,7 @@ impl Tool {
             Tool::Lower => "Drag to lower terrain. Right-drag raises.",
             Tool::Flatten => "Drag to level terrain to the height where the stroke started.",
             Tool::Smooth => "Drag to soften bumps and sharp edges.",
+            Tool::Erode => "Drag to rain on the terrain: water cuts gullies into slopes and piles soil at their feet.",
             Tool::Terrain => "Drag to paint the selected terrain. Right-click picks the terrain under the cursor.",
             Tool::Layer => "Drag to paint the selected layer. Right-drag erases it.",
             Tool::Water => "Click inside a basin to fill it to the water level. Right-click drains connected water.",
@@ -164,6 +171,8 @@ impl PaintSettings {
 pub struct StrokeState {
     pub flatten_target: Option<f32>,
     pub smooth_budget: f32,
+    /// Frames of erosion so far, so each frame's rain falls differently.
+    pub erode_frames: u64,
 }
 
 /// Applies one frame of a brush tool. `inverse` is the right mouse button.
@@ -221,6 +230,23 @@ pub fn apply(
             }
             changed.then_some(())?;
             area
+        }
+        Tool::Erode => {
+            stroke.erode_frames += 1;
+            let opts = ErosionOptions {
+                // Two drops per column per second at full power.
+                droplets: brush.strength * 2.0 * dt,
+                seed: splitmix64(
+                    dim.seed
+                        ^ stroke.erode_frames
+                        ^ ((x as u32 as u64) << 32 | y as u32 as u64),
+                ),
+                threads: None,
+            };
+            (erosion::erode_shape(dim, shape, brush.falloff, &opts) > 0).then_some(())?;
+            // The organic brush reaches further than its nominal radius.
+            let r = (brush.radius * 1.45).ceil() as i32 + 6;
+            Some((x - r, y - r, x + r, y + r))
         }
         Tool::Terrain => {
             (ops::paint_terrain(dim, shape, brush.falloff, paint.terrain) > 0).then_some(())?;

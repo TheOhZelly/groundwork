@@ -2,10 +2,13 @@
 
 use crate::args::Args;
 use crate::base64;
+use groundwork_core::erosion::{self, ErosionOptions};
 use groundwork_core::generate::{generate, GenerateOptions};
-use groundwork_core::ops::{self, Falloff};
+use groundwork_core::ops::{self, Falloff, Shape};
 use groundwork_core::terrain::Fidelity;
-use groundwork_core::{biomes, layers, render, Dimension, DimensionKind, GameMode, Terrain, World};
+use groundwork_core::{
+    biomes, layers, render, Dimension, DimensionKind, Extent, GameMode, Terrain, World,
+};
 use groundwork_export::{ExportOptions, McVersion, Outside};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
@@ -97,6 +100,7 @@ impl Server {
                     ))
                 })
             }
+            "erode" => self.erode(a),
             "paint_terrain" => {
                 let (shape, falloff, mask) = (a.shape()?, a.falloff(Falloff::Constant)?, a.mask()?);
                 let terrain = find_terrain(a.req_str("terrain")?)?;
@@ -355,6 +359,47 @@ impl Server {
             "biome": render::column_biome(dim, x, y).and_then(biomes::modern_id),
             "biome_painted": biome != biomes::BIOME_AUTO,
         })))
+    }
+
+    fn erode(&mut self, a: &Args) -> Result<Output, String> {
+        let strength = a.f32("strength")?.unwrap_or(1.0);
+        if !(0.01..=8.0).contains(&strength) {
+            return Err("strength must be between 0.01 and 8 raindrops per column".into());
+        }
+        // No area means the whole map. A plain rectangle is eroded in
+        // windows like the whole map; a brush fades out towards its edge.
+        let rect = a.has("x0");
+        let area = if ["x", "y", "x0", "y0", "x1", "y1"].iter().any(|k| a.has(k)) {
+            let default = if rect {
+                Falloff::Constant
+            } else {
+                Falloff::Smooth
+            };
+            Some((a.shape()?, a.falloff(default)?))
+        } else {
+            None
+        };
+        // Each call rains differently unless a seed is given.
+        let seed = a.u64("seed")?.unwrap_or(self.undo.len() as u64);
+        let started = std::time::Instant::now();
+        self.edit(|d| {
+            let opts = ErosionOptions {
+                droplets: strength,
+                seed: d.seed ^ seed,
+                threads: None,
+            };
+            let changed = match area {
+                None => erosion::erode(d, None, &opts),
+                Some((Shape::Rect { x0, y0, x1, y1 }, Falloff::Constant)) => {
+                    erosion::erode(d, Some(Extent { x0, y0, x1, y1 }), &opts)
+                }
+                Some((shape, falloff)) => erosion::erode_shape(d, shape, falloff, &opts),
+            };
+            Ok(format!(
+                "eroded {changed} columns in {:.1}s; use render_preview to see the result, or undo to revert",
+                started.elapsed().as_secs_f32()
+            ))
+        })
     }
 
     fn paint_layer(&mut self, a: &Args) -> Result<Output, String> {
@@ -746,6 +791,14 @@ pub fn definitions() -> Vec<Value> {
             brush_properties(), json!({ "height": { "type": "number" } }), &[], false),
         tool("smooth", "Smooth", "Smooth out bumps and sharp edges. Default falloff: smooth.",
             brush_properties(), json!({ "iterations": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Strength (default 2)" } }), &[], false),
+        tool("erode", "Erode",
+            "Hydraulic erosion: rain runs downhill, cutting gullies and valleys into slopes and building fans and deltas at their feet. Makes noise or imported terrain look natural. With no area it erodes the whole map; give x0..y1 for a rectangle, or x/y/radius for a brush that fades out towards its edge. Land under water is left alone.",
+            brush_properties(),
+            json!({
+                "strength": { "type": "number", "minimum": 0.01, "maximum": 8, "description": "Raindrops per column (default 1 = clearly weathered; 0.25 = light; 4 = heavy)" },
+                "seed": { "type": ["integer", "string"], "description": "Fix the rain pattern (default: different on every call)" },
+            }),
+            &[], false),
         tool("paint_terrain", "Paint terrain", "Paint a terrain type (surface material). Partial falloff strength scatters the terrain.",
             brush_properties(), json!({ "terrain": { "type": "string", "description": "Terrain id or name, e.g. SAND, Bare Grass" } }), &["terrain"], false),
         tool("paint_layer", "Paint layer", "Paint a layer: Frost, Void, FloodWithLava (value 1 to add, 0 to remove), Deciduous or Pine forest (value 0–15 sets tree density), Resources (ores; 8 is normal), Caverns (0–15 caves), or Biome (give biome).",
@@ -926,6 +979,33 @@ mod tests {
             .contains("\"chunks\": 256"));
         assert!(dir.join("save").join("level.dat").exists());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn erode_whole_map_and_brush() {
+        let mut s = Server::default();
+        ok(
+            &mut s,
+            "create_world",
+            json!({ "name": "Hills", "width_tiles": 2, "length_tiles": 2, "seed": 3, "hilliness": 40 }),
+        );
+        let whole = ok(&mut s, "erode", json!({}));
+        assert!(whole["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("eroded"));
+        ok(
+            &mut s,
+            "erode",
+            json!({ "x": 0, "y": 0, "radius": 30, "strength": 2 }),
+        );
+        ok(
+            &mut s,
+            "erode",
+            json!({ "x0": -100, "y0": -100, "x1": 100, "y1": 100, "seed": 5 }),
+        );
+        assert_eq!(s.undo.len(), 3);
+        assert!(err(&mut s, "erode", json!({ "strength": 100 })).contains("strength"));
     }
 
     #[test]

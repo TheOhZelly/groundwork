@@ -10,6 +10,7 @@ pub mod biomes;
 #[rustfmt::skip]
 mod biomes_table;
 pub mod dimension;
+pub mod erosion;
 pub mod generate;
 pub mod heightmap;
 pub mod io;

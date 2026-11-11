@@ -6,9 +6,10 @@ use crate::theme;
 use crate::tools::{self, Brush, BrushShape, PaintSettings, StrokeState, Tool};
 use crate::widgets;
 use eframe::egui::{self, vec2, Key, KeyboardShortcut, Modifiers, PointerButton, RichText, Sense};
+use groundwork_core::erosion::{self, ErosionOptions};
 use groundwork_core::generate::generate;
 use groundwork_core::ops::{self, Falloff};
-use groundwork_core::{biomes, layers, DimensionKind, GameMode, World};
+use groundwork_core::{biomes, layers, Dimension, DimensionKind, GameMode, World};
 use groundwork_export::{ExportOptions, ExportReport};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -96,8 +97,22 @@ struct ExportJob {
     target: PathBuf,
 }
 
+/// Whole-map erosion running in the background.
+struct ErodeJob {
+    rx: mpsc::Receiver<(Dimension, usize)>,
+    started: Instant,
+    /// Which document it was started on; a result for another is dropped.
+    document: u64,
+}
+
 pub struct App {
     doc: Option<Document>,
+    /// Counts documents opened, to tell them apart.
+    document: u64,
+    erode_job: Option<ErodeJob>,
+    /// Raindrops per column for "Erode whole map".
+    erode_amount: f32,
+    erode_runs: u64,
     tool: Tool,
     brush: Brush,
     paint: PaintSettings,
@@ -119,6 +134,10 @@ impl App {
         theme::apply(&cc.egui_ctx);
         let mut app = App {
             doc: None,
+            document: 0,
+            erode_job: None,
+            erode_amount: 1.0,
+            erode_runs: 0,
             tool: Tool::Raise,
             brush: Brush::default(),
             paint: PaintSettings::default(),
@@ -169,6 +188,7 @@ impl App {
 
     fn set_document(&mut self, doc: Document) {
         self.doc = Some(doc);
+        self.document += 1;
         self.view.reset();
         self.stroke = None;
     }
@@ -348,14 +368,85 @@ impl App {
         self.dialog = None;
     }
 
-    // The map view notices which tiles undo and redo replaced.
+    /// Erodes the whole map on a background thread; `poll_erosion` swaps the
+    /// result in. Snapshots share tiles, so the copy handed over is cheap.
+    fn start_erosion(&mut self) {
+        let Some(doc) = self.doc.as_ref() else { return };
+        let Some(mut dim) = doc.world.dimension(OVERWORLD).cloned() else {
+            return;
+        };
+        self.erode_runs += 1;
+        let opts = ErosionOptions {
+            droplets: self.erode_amount,
+            seed: doc.world.seed ^ self.erode_runs,
+            threads: None,
+        };
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let changed = erosion::erode(&mut dim, None, &opts);
+            let _ = tx.send((dim, changed));
+        });
+        self.erode_job = Some(ErodeJob {
+            rx,
+            started: Instant::now(),
+            document: self.document,
+        });
+    }
+
+    fn poll_erosion(&mut self, ctx: &egui::Context) {
+        let Some(job) = &self.erode_job else { return };
+        match job.rx.try_recv() {
+            Ok((mut eroded, changed)) => {
+                let seconds = job.started.elapsed().as_secs_f32();
+                let same_document = job.document == self.document;
+                self.erode_job = None;
+                let Some(doc) = self.doc.as_mut().filter(|_| same_document) else {
+                    return;
+                };
+                if changed == 0 {
+                    return self.toast(
+                        ToastKind::Info,
+                        "Erosion changed nothing: the land is flat or under water.",
+                    );
+                }
+                doc.snapshot();
+                if let Some(current) = doc.world.dimension_mut(OVERWORLD) {
+                    // Only the heights come from the job; keep settings that
+                    // were changed while it ran.
+                    eroded.resources_level = current.resources_level;
+                    eroded.caverns_level = current.caverns_level;
+                    *current = eroded;
+                }
+                doc.dirty = true;
+                self.toast(
+                    ToastKind::Success,
+                    format!("Eroded {changed} columns in {seconds:.1}s. Ctrl+Z undoes it."),
+                );
+            }
+            Err(mpsc::TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(100)),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.erode_job = None;
+                self.toast(ToastKind::Error, "Erosion stopped unexpectedly");
+            }
+        }
+    }
+
+    // The map view notices which tiles undo and redo replaced. Both wait
+    // while the whole map is being eroded, so its result lands on the world
+    // it was computed from.
     fn undo(&mut self) {
+        if self.erode_job.is_some() {
+            return;
+        }
         if let Some(doc) = self.doc.as_mut() {
             doc.undo();
         }
     }
 
     fn redo(&mut self) {
+        if self.erode_job.is_some() {
+            return;
+        }
         if let Some(doc) = self.doc.as_mut() {
             doc.redo();
         }
@@ -405,6 +496,7 @@ impl App {
                 Key::Num6,
                 Key::Num7,
                 Key::Num8,
+                Key::Num9,
             ];
             for (key, tool) in keys.iter().zip(Tool::ALL) {
                 if i.key_pressed(*key) {
@@ -527,7 +619,7 @@ impl App {
                 ui.vertical_centered(|ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
                     for (i, tool) in Tool::ALL.into_iter().enumerate() {
-                        if i == 4 || i == 6 {
+                        if i == 5 || i == 7 {
                             ui.add_space(4.0);
                             ui.separator();
                             ui.add_space(4.0);
@@ -587,7 +679,11 @@ impl App {
                                 });
                                 if matches!(
                                     self.tool,
-                                    Tool::Raise | Tool::Lower | Tool::Flatten | Tool::Smooth
+                                    Tool::Raise
+                                        | Tool::Lower
+                                        | Tool::Flatten
+                                        | Tool::Smooth
+                                        | Tool::Erode
                                 ) {
                                     ui.horizontal(|ui| {
                                         ui.add_sized([44.0, 20.0], egui::Label::new("Power"));
@@ -727,6 +823,9 @@ impl App {
                         }
 
                         let (mut import_heights, mut export_heights) = (false, false);
+                        let mut erode_all = false;
+                        let mut erode_amount = self.erode_amount;
+                        let eroding = self.erode_job.is_some();
                         if let Some(doc) = self.doc.as_mut() {
                             ui.add_space(6.0);
                             theme::card(ui, "World", |ui| {
@@ -811,7 +910,27 @@ impl App {
                                     import_heights = ui.button("⛰ Import height map…").clicked();
                                     export_heights = ui.button("Export…").on_hover_text("Save heights as a 16-bit PNG").clicked();
                                 });
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Erosion").small().color(theme::MUTED));
+                                ui.horizontal(|ui| {
+                                    ui.add_sized([60.0, 20.0], egui::Label::new("Rain"));
+                                    ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(60.0);
+                                    ui.add(
+                                        egui::Slider::new(&mut erode_amount, 0.25..=4.0)
+                                            .logarithmic(true)
+                                            .custom_formatter(|v, _| format!("{v:.2}×")),
+                                    )
+                                    .on_hover_text("Raindrops per column: 1× weathers the land clearly, 4× is heavy");
+                                });
+                                erode_all = ui
+                                    .add_enabled(!eroding, egui::Button::new("🌊 Erode whole map"))
+                                    .on_hover_text("Rain on the whole map: cuts valleys into slopes and builds fans and deltas. Runs in the background; Ctrl+Z undoes it.")
+                                    .clicked();
                             });
+                        }
+                        self.erode_amount = erode_amount;
+                        if erode_all {
+                            self.start_erosion();
                         }
                         if import_heights {
                             self.dialog = Some(Dialog::ImportHeightMap(dialogs::HeightMapForm::new(true)));
@@ -873,6 +992,13 @@ impl App {
                             ui.add(egui::Spinner::new().size(12.0));
                             ui.label(muted(format!(
                                 "Exporting… {:.0}s",
+                                job.started.elapsed().as_secs_f32()
+                            )));
+                        }
+                        if let Some(job) = &self.erode_job {
+                            ui.add(egui::Spinner::new().size(12.0));
+                            ui.label(muted(format!(
+                                "Eroding… {:.0}s",
                                 job.started.elapsed().as_secs_f32()
                             )));
                         }
@@ -954,7 +1080,9 @@ impl App {
             && (primary || secondary)
             && !space
             && !panning
-            && self.dialog.is_none();
+            && self.dialog.is_none()
+            // The eroded map replaces this one when it is ready.
+            && self.erode_job.is_none();
         match (editing, self.hover) {
             (true, Some((x, y))) => {
                 let first = self.stroke.is_none();
@@ -1274,6 +1402,7 @@ impl eframe::App for App {
 
         self.shortcuts(ctx);
         self.poll_export(ctx);
+        self.poll_erosion(ctx);
         self.top_bar(ctx);
         self.status_bar(ctx);
         self.tool_palette(ctx);
