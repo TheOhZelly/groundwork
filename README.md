@@ -1,13 +1,11 @@
-> **This is Groundwork**, an unofficial Rust port of WorldPainter with an MCP server, in progress. It lives in [`rust/`](rust/); start with [rust/README.md](rust/README.md). It is not affiliated with or endorsed by WorldPainter. The rest of this file and the Java code below are WorldPainter's, kept unchanged as the reference for the port. For the official project, see [Captain-Chaos/WorldPainter](https://github.com/Captain-Chaos/WorldPainter). See [THANKS.md](THANKS.md) for credits.
+# Groundwork
 
-# WorldPainter
+Groundwork is a Minecraft map painter written in Rust: a desktop editor for painting worlds with the mouse, and an MCP server so AI assistants can sculpt, paint and export maps too.
 
-WorldPainter is an interactive map generator for Minecraft. It allows you to "paint" landscapes using similar tools as a regular paint program. Sculpt and mould the terrain, paint materials, trees, snow and ice, etc. onto it, and much more.
+The code lives in [`rust/`](rust/); start with [rust/README.md](rust/README.md).
 
-## Distributing
+Groundwork is an unofficial port of [WorldPainter](https://www.worldpainter.net/) by Pepijn Schmitz, and is not affiliated with or endorsed by the WorldPainter project. Its data model, tables and export logic are derived from WorldPainter's Java source, which is available at [Captain-Chaos/WorldPainter](https://github.com/Captain-Chaos/WorldPainter) and in this repository's history. See [THANKS.md](THANKS.md) for credits.
 
-WorldPainter is open source software, licensed under the GPL version 3. This means that if you distribute it, original or in modified form, you must also distribute it (including your changes) as open source under the GPL version 3 (or later). See the [LICENSE](LICENSE) file for details.
+## License
 
-## Building
-
-WorldPainter is a Maven project and easy to build from the command line with Maven, or using your favourite IDE. However there are some missing dependencies which are not in Maven Central which you will have to install locally first. See the [BUILDING](BUILDING.md) file for details.
+GPL-3.0-or-later, the same as WorldPainter, from which Groundwork is derived. WorldPainter is © Pepijn Schmitz. See [LICENSE](LICENSE).

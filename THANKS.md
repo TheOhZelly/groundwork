@@ -4,7 +4,7 @@ Groundwork exists because of other people's work. Thanks to:
 
 ## WorldPainter
 
-- **Pepijn Schmitz** (Captain-Chaos), creator and maintainer of [WorldPainter](https://www.worldpainter.net/). Groundwork's data model, terrain and biome tables, editing operations and export logic are ported from his Java code, which this repository keeps as the reference.
+- **Pepijn Schmitz** (Captain-Chaos), creator and maintainer of [WorldPainter](https://www.worldpainter.net/). Groundwork's data model, terrain and biome tables, editing operations and export logic are ported from his Java code.
 - **Everyone who has contributed to WorldPainter** over the years, through code, bug reports, plugins and documentation.
 
 ## Minecraft formats
