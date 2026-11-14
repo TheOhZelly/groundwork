@@ -87,6 +87,14 @@ pub struct ExportOptions {
     pub version: McVersion,
     /// Worker threads; `None` uses [`balanced_threads`].
     pub threads: Option<usize>,
+    /// Write chunks as not yet decorated (status `surface`), so Minecraft
+    /// runs its own carvers (caves, ravines) and biome features (trees,
+    /// flowers, grass, ores…) when they first load. Needs a generator that
+    /// decorates: use [`Outside::Vanilla`].
+    pub populate: bool,
+    /// Carve Minecraft-1.18-style noise caves (cheese, spaghetti, noodle)
+    /// with lava below y=-55.
+    pub noise_caves: bool,
 }
 
 impl Default for ExportOptions {
@@ -96,6 +104,8 @@ impl Default for ExportOptions {
             overwrite: false,
             version: McVersion::default(),
             threads: None,
+            populate: false,
+            noise_caves: false,
         }
     }
 }
@@ -254,6 +264,10 @@ fn export_dimension(
         materials: materials::Materials::new(dim.seed),
         // CavernsExporter seeds its noise with the world seed plus this.
         caverns: groundwork_core::noise::PerlinNoise::new(dim.seed.wrapping_add(53_123_467)),
+        populate: options.populate,
+        cave_noise: options
+            .noise_caves
+            .then(|| underground::CaveNoise::new(dim.seed)),
     };
     let next = Mutex::new(regions.iter());
     let chunk_total = Mutex::new(0usize);

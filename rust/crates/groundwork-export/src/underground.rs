@@ -295,6 +295,159 @@ fn pocket(
     }
 }
 
+/// Noise fields for Minecraft-1.18-style caves (an approximation, not
+/// vanilla's exact noise router): cheese caves (big chambers and pillars),
+/// spaghetti caves (long tunnels where two noise surfaces cross) and noodle
+/// caves (thin winding passages).
+pub(crate) struct CaveNoise {
+    n: [PerlinNoise; 8],
+}
+
+impl CaveNoise {
+    pub(crate) fn new(seed: u64) -> Self {
+        CaveNoise {
+            n: std::array::from_fn(|i| {
+                PerlinNoise::new(splitmix64(seed ^ 0x6361_7665_7300_0000 ^ i as u64))
+            }),
+        }
+    }
+
+    /// cheese, spaghetti a, b, radius, noodle a, b, noodle mask.
+    fn fields(&self, x: f64, y: f64, z: f64) -> [f32; 7] {
+        let n = &self.n;
+        [
+            n[0].noise3(x / 90.0, y / 50.0, z / 90.0) + 0.5 * n[1].noise3(x / 38.0, y / 22.0, z / 38.0),
+            n[2].noise3(x / 72.0, y / 44.0, z / 72.0),
+            n[3].noise3(x / 72.0, y / 44.0, z / 72.0),
+            n[4].noise3(x / 150.0, y / 90.0, z / 150.0),
+            n[5].noise3(x / 30.0, y / 20.0, z / 30.0),
+            n[6].noise3(x / 30.0, y / 20.0, z / 30.0),
+            n[7].noise3(x / 180.0, y / 120.0, z / 180.0),
+        ]
+    }
+
+    /// 2D: where spaghetti caves may break through to dry land.
+    fn entrance(&self, x: f64, z: f64) -> f32 {
+        self.n[7].noise3(x / 260.0, 517.5, z / 260.0)
+    }
+}
+
+/// Lava fills cave air at and below this height, as in vanilla.
+const LAVA_LEVEL: i32 = -55;
+
+/// Carves 1.18-style noise caves. `fluids` holds (height, water level, …)
+/// per column. Keeps a solid roof under the sea, lakes and rivers.
+pub(crate) fn noise_caves(
+    dim: &Dimension,
+    cn: &CaveNoise,
+    blocks: &mut Blocks,
+    fluids: &[[(i32, i32, bool, bool); 16]; 16],
+    chunk_x: i32,
+    chunk_z: i32,
+    min_y: i32,
+) {
+    let top = fluids.iter().flatten().map(|c| c.0).max().unwrap_or(min_y);
+    if top <= min_y + 2 {
+        return;
+    }
+    // Sample on a 4×4×4 lattice and interpolate, like vanilla's noise cells.
+    let (x0, z0) = (chunk_x * 16, chunk_z * 16);
+    let ny = ((top - min_y) / 4 + 2) as usize;
+    let mut lattice = vec![[0f32; 7]; 5 * 5 * ny];
+    for iy in 0..ny {
+        for iz in 0..5 {
+            for ix in 0..5 {
+                lattice[(iy * 5 + iz) * 5 + ix] = cn.fields(
+                    (x0 + ix as i32 * 4) as f64,
+                    (min_y + iy as i32 * 4) as f64,
+                    (z0 + iz as i32 * 4) as f64,
+                );
+            }
+        }
+    }
+    let air = blocks.id("minecraft:air");
+    let lava = blocks.id("minecraft:lava");
+    for z in 0..16 {
+        for x in 0..16 {
+            let (h, w, _, _) = fluids[z as usize][x as usize];
+            let (wx, wz) = (x0 + x, z0 + z);
+            let under_water = w > h;
+            // Keep 12 blocks of rock under any water within 2 columns, so caves
+            // never open into the sea, a lake or a river (not even sideways).
+            let mut wet_floor = if under_water { Some(h) } else { None };
+            for dz in -2..=2 {
+                for dx in -2..=2 {
+                    let (nx, nz) = (x + dx, z + dz);
+                    let (nh, nw) = if (0..16).contains(&nx) && (0..16).contains(&nz) {
+                        let c = fluids[nz as usize][nx as usize];
+                        (Some(c.0), Some(c.1))
+                    } else {
+                        (dim.int_height_at(wx + dx, wz + dz), dim.water_level_at(wx + dx, wz + dz))
+                    };
+                    if let (Some(nh), Some(nw)) = (nh, nw) {
+                        if nw > nh {
+                            wet_floor = Some(wet_floor.map_or(nh, |f: i32| f.min(nh)));
+                        }
+                    }
+                }
+            }
+            let under_water = wet_floor.is_some();
+            let roof = match wet_floor {
+                Some(f) => (h - f) + 12,
+                None => 6,
+            };
+            // Cave mouths only on dry land well away from water.
+            let mouth = !under_water
+                && cn.entrance(wx as f64, wz as f64) > 0.2
+                && [(-8, 0), (8, 0), (0, -8), (0, 8)].iter().all(|&(dx, dz)| {
+                    match (dim.int_height_at(wx + dx, wz + dz), dim.water_level_at(wx + dx, wz + dz)) {
+                        (Some(nh), Some(nw)) => nw <= nh,
+                        _ => false,
+                    }
+                });
+            let (fx, fz) = ((x % 4) as f32 / 4.0, (z % 4) as f32 / 4.0);
+            let (ix, iz) = ((x / 4) as usize, (z / 4) as usize);
+            for y in min_y + 2..=h {
+                let depth = h - y;
+                if depth < roof && !mouth {
+                    continue;
+                }
+                let iy = ((y - min_y) / 4) as usize;
+                let fy = ((y - min_y) % 4) as f32 / 4.0;
+                let at = |dy: usize, dz: usize, dx: usize| &lattice[((iy + dy) * 5 + iz + dz) * 5 + ix + dx];
+                let mut f = [0f32; 7];
+                for (k, v) in f.iter_mut().enumerate() {
+                    let l = |a: f32, b: f32, t: f32| a + (b - a) * t;
+                    let c00 = l(at(0, 0, 0)[k], at(0, 0, 1)[k], fx);
+                    let c01 = l(at(0, 1, 0)[k], at(0, 1, 1)[k], fx);
+                    let c10 = l(at(1, 0, 0)[k], at(1, 0, 1)[k], fx);
+                    let c11 = l(at(1, 1, 0)[k], at(1, 1, 1)[k], fx);
+                    *v = l(l(c00, c01, fz), l(c10, c11, fz), fy);
+                }
+                let [cheese, sa, sb, sr, na, nb, mask] = f;
+                // Fewer, smaller chambers near the surface; more below y=0.
+                let near_surface = (1.0 - (depth - roof) as f32 / 28.0).clamp(0.0, 1.0);
+                let deep = ((16 - y) as f32 / 80.0).clamp(0.0, 1.0);
+                let cheese_cut = depth >= roof && cheese > 0.27 - 0.06 * deep + 0.3 * near_surface;
+                let r = 0.022 + 0.026 * (sr + 0.5).clamp(0.0, 1.0);
+                let spaghetti = sa.abs() < r && sb.abs() < r;
+                let noodle = y < 40 && depth >= roof && mask > 0.04 && na.abs() < 0.014 && nb.abs() < 0.014;
+                if !(cheese_cut || spaghetti || noodle) {
+                    continue;
+                }
+                if let Some(existing) = blocks.get(x, y, z) {
+                    let name = blocks.name(existing);
+                    let soft = name.ends_with("_ore")
+                        || matches!(name, "minecraft:dirt" | "minecraft:gravel" | "minecraft:grass_block" | "minecraft:coarse_dirt" | "minecraft:podzol");
+                    if is_rock(name) || soft {
+                        blocks.put(x, y, z, if y <= LAVA_LEVEL { lava } else { air });
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Hollows out caverns, as `CavernsExporter` does.
 pub(crate) fn caverns(
     dim: &Dimension,

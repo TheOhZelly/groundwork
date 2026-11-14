@@ -642,6 +642,8 @@ impl Server {
             overwrite: a.bool("overwrite")?.unwrap_or(false),
             version,
             threads: a.i32("threads")?.map(|t| t.max(1) as usize),
+            populate: a.bool("populate")?.unwrap_or(false),
+            noise_caves: a.bool("noise_caves")?.unwrap_or(false),
         };
         let started = std::time::Instant::now();
         let report = groundwork_export::export(world, &path, &options)
@@ -860,6 +862,8 @@ pub fn definitions() -> Vec<Value> {
                 "overwrite": { "type": "boolean", "description": "Write into a folder that already holds a world" },
                 "minecraft_version": { "type": "string", "enum": ["1.21.11", "1.21.1"], "description": "Save format (default 1.21.11)" },
                 "threads": { "type": "integer", "minimum": 1, "description": "Worker threads (default: a quarter of the machine's threads, at most 6; more is faster but works the CPU harder)" },
+                "populate": { "type": "boolean", "description": "Let Minecraft decorate the painted chunks on first load: vanilla caves and ravines, trees, flowers, grass and ores for each painted biome. Use with outside: vanilla (the flat ocean and void generators do not decorate)" },
+                "noise_caves": { "type": "boolean", "description": "Carve Minecraft-1.18-style caves (big cheese chambers, spaghetti tunnels, thin noodle passages; lava below y=-55), keeping solid rock under water. Works with or without populate" },
             }),
             &["path"], false),
         tool("import_height_map", "Import height map",

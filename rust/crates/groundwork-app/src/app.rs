@@ -353,6 +353,8 @@ impl App {
             overwrite: form.overwrite,
             version: form.version,
             threads: Some(form.cpu.threads()),
+            populate: false,
+            noise_caves: false,
         };
         let (tx, rx) = mpsc::channel();
         let dir = target.clone();

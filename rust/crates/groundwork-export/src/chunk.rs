@@ -16,6 +16,9 @@ pub struct Context {
     pub data_version: i32,
     pub materials: Materials,
     pub caverns: groundwork_core::noise::PerlinNoise,
+    /// Leave decoration to Minecraft (see `ExportOptions::populate`).
+    pub populate: bool,
+    pub cave_noise: Option<crate::underground::CaveNoise>,
 }
 
 /// Small plants and snow layers that trees may grow through.
@@ -129,6 +132,8 @@ pub fn build(
         height: [[min_y; 16]; 16],
     };
     let mut column_biomes = [[0u8; 4]; 4];
+    // (height, water level, frost, lava) per column, for the fluid ticks.
+    let mut fluids = [[(0i32, 0i32, false, false); 16]; 16];
     let mut problems = BTreeSet::new();
     let deepslate_transition = dim.subsurface_block == STONE;
 
@@ -163,6 +168,7 @@ pub fn build(
             if tile.layer_value(layers::VOID, tx, ty) == 1 {
                 continue;
             }
+            fluids[lz as usize][lx as usize] = (height, water, frost, lava);
 
             let info = terrain.info();
             let (top, under) = match (info.top, info.under) {
@@ -260,7 +266,51 @@ pub fn build(
         chunk_z,
         min_y,
     );
+    if let Some(cn) = &ctx.cave_noise {
+        crate::underground::noise_caves(dim, cn, &mut blocks, &fluids, chunk_x, chunk_z, min_y);
+    }
     crate::trees::place(dim, &mut blocks, chunk_x, chunk_z, max_y);
+
+    // Schedule a fluid tick for every water (or lava) block that borders air,
+    // so Minecraft lets it flow on load (waterfalls between river steps)
+    // instead of leaving it hanging until a neighbouring block changes.
+    let mut fluid_ticks = Vec::new();
+    for lz in 0..16 {
+        for lx in 0..16 {
+            let (height, water, frost, lava) = fluids[lz as usize][lx as usize];
+            if water <= height {
+                continue;
+            }
+            let (wx, wz) = (chunk_x * 16 + lx, chunk_z * 16 + lz);
+            for y in height + 1..=water {
+                if frost && !lava && y == water {
+                    continue; // ice
+                }
+                let open = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dz)| {
+                    match blocks.get(lx + dx, y, lz + dz) {
+                        Some(id) => blocks.replaceable[id as usize],
+                        None => match (
+                            dim.int_height_at(wx + dx, wz + dz),
+                            dim.water_level_at(wx + dx, wz + dz),
+                        ) {
+                            (Some(h), Some(w)) => y > h && y > w,
+                            _ => false,
+                        },
+                    }
+                });
+                if open {
+                    fluid_ticks.push(compound! {
+                        "i" => if lava { "minecraft:lava" } else { "minecraft:water" },
+                        "x" => wx,
+                        "y" => y,
+                        "z" => wz,
+                        "t" => 1i32,
+                        "p" => 0i32,
+                    });
+                }
+            }
+        }
+    }
 
     if !problems.is_empty() {
         warnings.lock().unwrap().extend(problems);
@@ -283,14 +333,20 @@ pub fn build(
         "xPos" => chunk_x,
         "yPos" => min_y.div_euclid(16),
         "zPos" => chunk_z,
-        "Status" => "minecraft:full",
+        // With Groundwork's own noise caves, mark carving as done so Minecraft only
+        // adds features; its carvers would cut through the sea floor into them.
+        "Status" => match (ctx.populate, ctx.cave_noise.is_some()) {
+            (false, _) => "minecraft:full",
+            (true, false) => "minecraft:surface",
+            (true, true) => "minecraft:carvers",
+        },
         "LastUpdate" => 0i64,
         "InhabitedTime" => 0i64,
         "isLightOn" => false,
         "sections" => List::compounds(sections),
         "block_entities" => List::empty(TAG_COMPOUND),
         "block_ticks" => List::empty(TAG_COMPOUND),
-        "fluid_ticks" => List::empty(TAG_COMPOUND),
+        "fluid_ticks" => List::compounds(fluid_ticks),
         "structures" => compound! { "References" => compound! {}, "starts" => compound! {} },
     }
 }

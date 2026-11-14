@@ -1059,6 +1059,8 @@ fn main() {
         overwrite: true,
         version: McVersion::V1_21_11,
         threads: Some(THREADS),
+        populate: false,
+        noise_caves: false,
     };
     let last = AtomicUsize::new(0);
     let report =
