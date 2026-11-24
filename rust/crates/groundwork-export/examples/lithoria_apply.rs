@@ -3,10 +3,10 @@
 //!
 //! ```text
 //! cargo run --release -p groundwork-export --example lithoria_apply -- \
-//!     RAW_DIR X0 Z0 SIZE OUT.gwork NAME SEED
+//!     RAW_DIR X0 Z0 SIZE|WxH OUT.gwork NAME SEED [PAD_TILES]
 //! ```
 //!
-//! RAW_DIR holds SIZE×SIZE little-endian rasters, row-major from (X0, Z0):
+//! RAW_DIR holds SIZE×SIZE (or W×H) little-endian rasters, row-major from (X0, Z0):
 //! `height.f32`, `water_level.i16`, `terrain.u8`, `biome.u8`, `deciduous.u8`,
 //! `pine.u8`, `frost.u8`, plus `terrain_names.txt` and `biome_names.txt`
 //! (line n names code n). X0, Z0 and SIZE must be multiples of 128.
@@ -37,11 +37,18 @@ fn main() {
     // Optional ring of flat deep-ocean tiles around the rasters.
     let pad: i32 = a.get(8).map_or(0, |p| p.parse().unwrap());
     let dir = PathBuf::from(&a[1]);
-    let (x0, z0, size): (i32, i32, i32) = (a[2].parse().unwrap(), a[3].parse().unwrap(), a[4].parse().unwrap());
+    let (x0, z0): (i32, i32) = (a[2].parse().unwrap(), a[3].parse().unwrap());
+    let (w, h): (i32, i32) = match a[4].split_once('x') {
+        Some((w, h)) => (w.parse().unwrap(), h.parse().unwrap()),
+        None => (a[4].parse().unwrap(), a[4].parse().unwrap()),
+    };
     let out = PathBuf::from(&a[5]);
     let seed: u64 = a[7].parse().unwrap();
-    assert!(x0 % TILE_SIZE == 0 && z0 % TILE_SIZE == 0 && size % TILE_SIZE == 0, "not tile-aligned");
-    let n = (size as usize) * (size as usize);
+    assert!(
+        x0 % TILE_SIZE == 0 && z0 % TILE_SIZE == 0 && w % TILE_SIZE == 0 && h % TILE_SIZE == 0,
+        "not tile-aligned"
+    );
+    let n = (w as usize) * (h as usize);
 
     let height = read(&dir, "height.f32", n, 4);
     let water = read(&dir, "water_level.i16", n, 2);
@@ -61,14 +68,14 @@ fn main() {
 
     let started = std::time::Instant::now();
     let mut dim = Dimension::new(DimensionKind::Overworld, -64, 320, seed);
-    let tiles = size / TILE_SIZE;
-    for ty in 0..tiles {
-        for tx in 0..tiles {
+    let (tiles_x, tiles_z) = (w / TILE_SIZE, h / TILE_SIZE);
+    for ty in 0..tiles_z {
+        for tx in 0..tiles_x {
             let mut tile = Tile::new(x0 / TILE_SIZE + tx, z0 / TILE_SIZE + ty, -64, 320);
             for ly in 0..TILE_SIZE {
                 let row = (ty * TILE_SIZE + ly) as usize;
                 for lx in 0..TILE_SIZE {
-                    let i = row * size as usize + (tx * TILE_SIZE + lx) as usize;
+                    let i = row * w as usize + (tx * TILE_SIZE + lx) as usize;
                     let h = f32::from_le_bytes(height[i * 4..i * 4 + 4].try_into().unwrap());
                     let w = i16::from_le_bytes(water[i * 2..i * 2 + 2].try_into().unwrap());
                     tile.set_height(lx, ly, h);
@@ -92,8 +99,8 @@ fn main() {
     if pad > 0 {
         let deep = biomes::find("minecraft:deep_ocean").unwrap();
         let (t0x, t0z) = (x0 / TILE_SIZE, z0 / TILE_SIZE);
-        for ty in t0z - pad..t0z + tiles + pad {
-            for tx in t0x - pad..t0x + tiles + pad {
+        for ty in t0z - pad..t0z + tiles_z + pad {
+            for tx in t0x - pad..t0x + tiles_x + pad {
                 if dim.tile(tx, ty).is_some() {
                     continue;
                 }
@@ -112,11 +119,11 @@ fn main() {
     }
     dim.compact();
     let mut world = World::new(a[6].as_str(), seed, dim);
-    world.spawn = (x0 + size / 2, z0 + size / 2);
+    world.spawn = (x0 + w / 2, z0 + h / 2);
     groundwork_core::io::save(&world, &out).expect("save .gwork");
     println!(
-        "built {} tiles ({size}×{size} blocks at {x0},{z0}) in {:.1}s -> {}",
-        tiles * tiles,
+        "built {} tiles ({w}×{h} blocks at {x0},{z0}) in {:.1}s -> {}",
+        tiles_x * tiles_z,
         started.elapsed().as_secs_f32(),
         out.display()
     );
